@@ -1,260 +1,22 @@
-# Karman Kar Shows & Events — hardened app.py
-# 4-space indentation only (no tabs)
-
 import os
+import sqlite3
+import secrets
 import io
 import csv
-import hmac
-import secrets
-import sqlite3
+import zipfile
 import hashlib
-from html import escape
-from pathlib import Path
-from typing import Dict, Optional, Any, Callable
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
-from urllib.parse import urlencode, urlparse
+import json
 
-import stripe
-from flask import (
-    Flask,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    jsonify,
-    session,
-    send_file,
-    abort,
-    flash,
-)
-from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.security import check_password_hash
-from functools import wraps
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
-from database import (
-    init_db,
-    ensure_default_show,
-    build_snapshot_zip_bytes,
-    get_active_show,
-    get_show_by_slug,
-    toggle_show_voting,
-    set_show_voting_open,
-    update_show_admin_settings,
-    set_show_charity_connect,
-    clear_show_charity_connect,
-    count_registered_cars,
-    show_has_capacity,
-    update_person,
-    update_show_car_details,
-    mark_show_car_checked_in,
-    get_show_car_public_by_token,
-    get_show_car_private_by_token,
-    create_registration_intent,
-    get_registration_intent_by_token,
-    attach_stripe_session_to_registration_intent,
-    finalize_registration_intent_paid,
-    create_vote_intent,
-    attach_stripe_session_to_vote_intent,
-    finalize_vote_intent_paid,
-    reset_votes_for_show,
-    export_votes_for_show,
-    leaderboard_by_category,
-    leaderboard_overall,
-    create_placeholder_cars,
-    list_show_cars_public,
-    get_show_sponsors,
-    upsert_sponsor,
-    attach_sponsor_to_show,
-    remove_sponsor_from_show,
-    set_title_sponsor,
-    create_attendee,
-    record_field_metric,
-    create_donation_row,
-    attach_stripe_session_to_donation,
-    mark_donation_paid,
-    waiver_mark_received,
-    has_processed_webhook_event,
-    mark_webhook_event_processed,
-    create_waiver_evidence_record,
-    log_audit_event,
-    rate_limit_increment,
-    get_upcoming_event,
-    save_upcoming_event,
-    create_event_interest_signup,
-)
+DB_PATH = os.getenv("DB_PATH")
+if not DB_PATH:
+    DB_PATH = "/data/app.db" if os.path.isdir("/data") else "app.db"
 
 
-APP_ENV = os.getenv("APP_ENV", os.getenv("FLASK_ENV", "production")).strip().lower()
-IS_DEV = APP_ENV in {"dev", "development", "local", "test", "testing"}
-
-
-def _required_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if value:
-        return value
-    raise RuntimeError(f"Missing required environment variable: {name}")
-
-
-FLASK_SECRET = os.getenv("FLASK_SECRET", "").strip() if IS_DEV else _required_env("FLASK_SECRET")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
-ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
-if not IS_DEV and not (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH):
-    raise RuntimeError("Set ADMIN_PASSWORD_HASH or ADMIN_PASSWORD in the environment.")
-
-app = Flask(__name__)
-app.secret_key = FLASK_SECRET or "dev-only-local-secret"
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=not IS_DEV,
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
-)
-
-BASE_URL = os.getenv("BASE_URL", "").strip()
-PLATFORM_STRIPE_SECRET_KEY = (
-    os.getenv("PLATFORM_STRIPE_SECRET_KEY", "").strip()
-    or os.getenv("STRIPE_SECRET_KEY", "").strip()
-)
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-STRIPE_CLIENT_ID = os.getenv("STRIPE_CLIENT_ID", "").strip()
-
-stripe.api_key = PLATFORM_STRIPE_SECRET_KEY
-
-CATEGORY_SLUGS: Dict[str, str] = {
-    "army": "Army",
-    "navy": "Navy",
-    "air-force": "Air Force",
-    "marines": "Marines",
-    "coast-guard": "Coast Guard",
-    "space-force": "Space Force",
-    "peoples-choice": "People’s Choice",
-}
-
-DEFAULT_SHOW = {
-    "slug": "karman-charity-show",
-    "title": "Karman Charity Car Show",
-    "date": "Saturday, April 26, 2026",
-    "time": "Cars arrive at 10:00 AM",
-    "location_name": "Children’s Mercy Park",
-    "address": "1 Sporting Way, Kansas City, KS 66111",
-    "benefiting": "Saving22 / 22 Survivor Awareness",
-    "suggested_donation": "$35 suggested donation for show cars",
-    "description": (
-        "A charity car show supporting veteran suicide awareness with judged certificates "
-        "by branch favorites and People’s Choice."
-    ),
-}
-
-DEFAULT_UPCOMING_EVENT = {
-    "heading": "Upcoming show",
-    "title": "Show or Pop-Up Event",
-    "display_date": "April 25 or 26, 2026",
-    "visible": 1,
-    "intro": "Check the newsletter QR code for the latest details on our next show or pop-up event.",
-    "details": "Location TBA by April 1, 2026 • Date either April 25 or 26, 2026, TBA by April 1, 2026",
-    "qr_message": "Use the QR code in the newsletter to get updated information as plans are finalized.",
-}
-
-init_db()
-ensure_default_show(DEFAULT_SHOW)
-
-CONSENT_TEXT_CAR_OWNER = (
-    "By submitting this form, you agree Karman Kar Shows & Events may contact you about this event and future events "
-    "if selected. Msg/data rates may apply. Opt out anytime."
-)
-CONSENT_VERSION = "2026-03-11"
-ATTENDEE_CONSENT_TEXT = (
-    "By selecting these options, you agree Karman Kar Shows & Events may contact you about the event and, "
-    "if selected, share sponsor offers. Msg/data rates may apply. Opt out anytime."
-)
-ATTENDEE_CONSENT_VERSION = "2026-03-11"
-
-
-def _get_upcoming_event_for_display() -> Dict[str, Any]:
-    upcoming_event = get_upcoming_event()
-    if not upcoming_event:
-        return DEFAULT_UPCOMING_EVENT.copy()
-    return dict(upcoming_event)
-
-
-def prereg_allowed(show) -> bool:
-    if not show:
-        return False
-    ov = show["allow_prereg_override"] if "allow_prereg_override" in show.keys() else None
-    if ov is not None:
-        try:
-            return int(ov) == 1
-        except Exception:
-            pass
-    st = (show["show_type"] if "show_type" in show.keys() else "full") or "full"
-    return str(st).strip().lower() == "full"
-
-
-def _require_platform_stripe() -> None:
-    if not PLATFORM_STRIPE_SECRET_KEY:
-        abort(500, "Stripe platform key is not configured. Set PLATFORM_STRIPE_SECRET_KEY.")
-
-
-def _abs_url(path: str) -> str:
-    if BASE_URL:
-        return BASE_URL.rstrip("/") + path
-    return request.url_root.rstrip("/") + path
-
-
-def _parse_dollars_to_cents(value: str, default_cents: int = 0) -> int:
-    try:
-        return max(0, int(round(float((value or "").strip()) * 100)))
-    except Exception:
-        return default_cents
-
-
-def _connected_account_id(show) -> Optional[str]:
-    if not show:
-        return None
-    acct = (show["charity_stripe_account_id"] or "").strip() if "charity_stripe_account_id" in show.keys() else ""
-    status = (show["charity_connect_status"] or "").strip() if "charity_connect_status" in show.keys() else ""
-    return acct if acct and status == "connected" else None
-
-
-def _require_connected_account(show) -> str:
-    acct = _connected_account_id(show)
-    if not acct:
-        abort(500, "No charity Stripe account is connected for this show.")
-    return acct
-
-
-def _stripe_connect_redirect_uri() -> str:
-    return _abs_url(url_for("admin_connect_charity_stripe_callback"))
-
-
-def _build_connect_authorize_url(show_id: int, show_slug: str) -> str:
-    if not STRIPE_CLIENT_ID:
-        abort(500, "Stripe Connect client ID is not configured. Set STRIPE_CLIENT_ID.")
-    state_token = secrets.token_urlsafe(24)
-    session["stripe_connect_state"] = state_token
-    session["stripe_connect_show_id"] = int(show_id)
-    session["stripe_connect_show_slug"] = show_slug
-    params = {
-        "response_type": "code",
-        "client_id": STRIPE_CLIENT_ID,
-        "scope": "read_write",
-        "state": state_token,
-        "redirect_uri": _stripe_connect_redirect_uri(),
-    }
-    return "https://connect.stripe.com/oauth/authorize?" + urlencode(params)
-
-
-def _db_path() -> str:
-    path = os.getenv("DB_PATH")
-    if path:
-        return path
-    return "/data/app.db" if os.path.isdir("/data") else "app.db"
-
-
-def _conn_direct() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False, timeout=30)
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -262,161 +24,1400 @@ def _conn_direct() -> sqlite3.Connection:
     return conn
 
 
-def _waiver_dir() -> Path:
-    p = Path("/data/waivers") if os.path.isdir("/data") else Path(app.instance_path) / "waivers"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+def _b(v: bool) -> int:
+    return 1 if v else 0
 
 
-def _client_ip() -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    return forwarded or (request.remote_addr or "")
+def _new_token() -> str:
+    return secrets.token_urlsafe(18)
 
 
-def _user_agent() -> str:
-    return (request.headers.get("User-Agent", "") or "")[:1000]
+def _new_car_token() -> str:
+    return secrets.token_urlsafe(12)
 
 
-def _log_event(action: str, show_id: Optional[int] = None, details: Optional[Dict[str, Any]] = None, actor_type: str = "system") -> None:
-    try:
-        log_audit_event(
-            show_id=show_id,
-            actor_type=actor_type,
-            action=action,
-            details=details or {},
-            ip_address=_client_ip(),
-            user_agent=_user_agent(),
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def init_db() -> None:
+    conn = _conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            date TEXT,
+            time TEXT,
+            location_name TEXT,
+            address TEXT,
+            benefiting TEXT,
+            suggested_donation TEXT,
+            description TEXT,
+            voting_open INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
-    except Exception:
-        pass
+        """
+    )
 
-
-def _same_origin_allowed() -> bool:
-    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
-        return True
-    if request.endpoint == "stripe_webhook":
-        return True
-    host_url = _abs_url("")
-    host = urlparse(host_url).netloc
-    origin = request.headers.get("Origin", "").strip()
-    referer = request.headers.get("Referer", "").strip()
-    if origin:
-        return urlparse(origin).netloc == host
-    if referer:
-        return urlparse(referer).netloc == host
-    return IS_DEV
-
-
-@app.before_request
-def security_before_request():
-    session.permanent = True
-    if not _same_origin_allowed():
-        abort(400, "Blocked request origin.")
-    _maybe_auto_close_voting()
-
-
-def _check_admin_password(raw_password: str) -> bool:
-    if ADMIN_PASSWORD_HASH:
+    for sql in [
+        "ALTER TABLE shows ADD COLUMN show_type TEXT NOT NULL DEFAULT 'full'",
+        "ALTER TABLE shows ADD COLUMN allow_prereg_override INTEGER",
+        "ALTER TABLE shows ADD COLUMN max_cars INTEGER",
+        "ALTER TABLE shows ADD COLUMN use_single_processor INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN single_processor_target TEXT NOT NULL DEFAULT 'charity'",
+        "ALTER TABLE shows ADD COLUMN voting_processor_target TEXT NOT NULL DEFAULT 'charity'",
+        "ALTER TABLE shows ADD COLUMN registration_processor_target TEXT NOT NULL DEFAULT 'karman'",
+        "ALTER TABLE shows ADD COLUMN donation_processor_target TEXT NOT NULL DEFAULT 'charity'",
+        "ALTER TABLE shows ADD COLUMN karman_processor_label TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_processor_label TEXT",
+        "ALTER TABLE shows ADD COLUMN karman_stripe_secret_key TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_stripe_secret_key TEXT",
+        "ALTER TABLE shows ADD COLUMN public_vote_disclosure TEXT",
+        "ALTER TABLE shows ADD COLUMN public_registration_disclosure TEXT",
+        "ALTER TABLE shows ADD COLUMN public_donation_disclosure TEXT",
+        "ALTER TABLE shows ADD COLUMN registration_fee_cents INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN attendee_fee_cents INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN vote_price_cents INTEGER NOT NULL DEFAULT 100",
+        "ALTER TABLE shows ADD COLUMN charity_stripe_account_id TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_connect_status TEXT NOT NULL DEFAULT 'not_connected'",
+        "ALTER TABLE shows ADD COLUMN charity_connected_at TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_connect_email TEXT",
+        "ALTER TABLE shows ADD COLUMN waiver_text TEXT",
+        "ALTER TABLE shows ADD COLUMN waiver_version TEXT",
+    ]:
         try:
-            return check_password_hash(ADMIN_PASSWORD_HASH, raw_password or "")
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS people (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            email TEXT NOT NULL,
+            opt_in_future INTEGER NOT NULL DEFAULT 0,
+            sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            consent_text TEXT,
+            consent_version TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    for sql in [
+        "ALTER TABLE people ADD COLUMN sponsor_opt_in INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE people ADD COLUMN consent_text TEXT",
+        "ALTER TABLE people ADD COLUMN consent_version TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_cars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            person_id INTEGER NOT NULL,
+            car_number INTEGER NOT NULL,
+            car_token TEXT NOT NULL UNIQUE,
+            year TEXT NOT NULL,
+            make TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(person_id) REFERENCES people(id),
+            UNIQUE(show_id, car_number)
+        )
+        """
+    )
+
+    for sql in [
+        "ALTER TABLE show_cars ADD COLUMN waiver_received INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE show_cars ADD COLUMN waiver_received_at TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_received_by TEXT",
+        "ALTER TABLE show_cars ADD COLUMN registration_payment_status TEXT",
+        "ALTER TABLE show_cars ADD COLUMN registration_amount_cents INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE show_cars ADD COLUMN registration_session_id TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_signed_name TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_signed_at TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_version TEXT",
+        "ALTER TABLE show_cars ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE show_cars ADD COLUMN registration_state TEXT NOT NULL DEFAULT 'paid'",
+        "ALTER TABLE show_cars ADD COLUMN checked_in_at TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS registration_intents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            intent_token TEXT NOT NULL UNIQUE,
+            owner_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            email TEXT NOT NULL,
+            opt_in_future INTEGER NOT NULL DEFAULT 0,
+            sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            car_number INTEGER NOT NULL,
+            year TEXT NOT NULL,
+            make TEXT NOT NULL,
+            model TEXT NOT NULL,
+            waiver_accepted INTEGER NOT NULL DEFAULT 0,
+            waiver_signed_name TEXT NOT NULL,
+            waiver_text TEXT,
+            waiver_version TEXT,
+            waiver_text_sha256 TEXT,
+            amount_cents INTEGER NOT NULL DEFAULT 0,
+            payment_status TEXT NOT NULL DEFAULT 'pending',
+            stripe_session_id TEXT UNIQUE,
+            stripe_payment_intent_id TEXT,
+            finalized_show_car_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            paid_at TEXT,
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(finalized_show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    for sql in [
+        "ALTER TABLE registration_intents ADD COLUMN waiver_text_sha256 TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            show_car_id INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            vote_qty INTEGER NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            stripe_session_id TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vote_intents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            show_car_id INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            vote_qty INTEGER NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            payment_status TEXT NOT NULL DEFAULT 'pending',
+            stripe_session_id TEXT UNIQUE,
+            stripe_payment_intent_id TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            paid_at TEXT,
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sponsors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            logo_path TEXT,
+            website_url TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_sponsors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            sponsor_id INTEGER NOT NULL,
+            placement TEXT NOT NULL DEFAULT 'standard',
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(show_id, sponsor_id),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(sponsor_id) REFERENCES sponsors(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attendees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            phone TEXT,
+            email TEXT,
+            zip TEXT,
+            sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            updates_opt_in INTEGER NOT NULL DEFAULT 0,
+            consent_text TEXT,
+            consent_version TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS donations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            attendee_id INTEGER,
+            amount_cents INTEGER NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            status TEXT NOT NULL,
+            stripe_session_id TEXT UNIQUE,
+            stripe_payment_intent_id TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            paid_at TEXT,
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(attendee_id) REFERENCES attendees(id)
+        )
+        """
+    )
+
+    for sql in [
+        "ALTER TABLE donations ADD COLUMN stripe_payment_intent_id TEXT",
+        "ALTER TABLE donations ADD COLUMN paid_at TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS field_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            field_name TEXT NOT NULL,
+            was_provided INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_webhook_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stripe_event_id TEXT NOT NULL UNIQUE,
+            event_type TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS waiver_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            registration_intent_id INTEGER,
+            show_car_id INTEGER,
+            car_number INTEGER,
+            owner_name TEXT,
+            phone TEXT,
+            email TEXT,
+            year TEXT,
+            make TEXT,
+            model TEXT,
+            opt_in_future INTEGER NOT NULL DEFAULT 0,
+            sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            waiver_version TEXT,
+            waiver_text_sha256 TEXT,
+            signed_name TEXT,
+            waiver_accepted INTEGER NOT NULL DEFAULT 0,
+            intent_token TEXT,
+            html_path TEXT,
+            request_path TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at_utc TEXT NOT NULL,
+            created_at_local TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(registration_intent_id) REFERENCES registration_intents(id),
+            FOREIGN KEY(show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER,
+            actor_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details_json TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit_hits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key TEXT NOT NULL,
+            window_started_at INTEGER NOT NULL,
+            hit_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(bucket_key, window_started_at)
+        )
+        """
+    )
+
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_shows_active ON shows(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_show_cars_show_id ON show_cars(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_cars_token ON show_cars(car_token)",
+        "CREATE INDEX IF NOT EXISTS idx_show_cars_state ON show_cars(show_id, registration_state)",
+        "CREATE INDEX IF NOT EXISTS idx_registration_intents_show_id ON registration_intents(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vote_intents_show_id ON vote_intents(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_votes_show_id ON votes(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_donations_show_id ON donations(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_waiver_evidence_show_id ON waiver_evidence(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_show_id ON audit_logs(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket ON rate_limit_hits(bucket_key, window_started_at)",
+    ]:
+        cur.execute(sql)
+     
+            # UPCOMING EVENT (single record)
+    cur.execute(
+        
+        CREATE TABLE IF NOT EXISTS upcoming_event (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            title TEXT,
+            event_date TEXT,
+            event_time TEXT,
+            location_name TEXT,
+            address TEXT,
+            description TEXT,
+            cta_label TEXT,
+            cta_url TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    # EVENT INTEREST SIGNUPS
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_interest_signups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            email TEXT,
+            phone TEXT,
+            wants_email INTEGER NOT NULL DEFAULT 0,
+            wants_text INTEGER NOT NULL DEFAULT 0,
+            source TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# SHOWS
+
+def ensure_default_show(default_show: Dict[str, Any]) -> None:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM shows WHERE slug = ?", (default_show["slug"],))
+    row = cur.fetchone()
+    if not row:
+        cur.execute(
+            """
+            INSERT INTO shows (
+                slug, title, date, time, location_name, address,
+                benefiting, suggested_donation, description, voting_open, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+            """,
+            (
+                default_show["slug"],
+                default_show["title"],
+                default_show.get("date"),
+                default_show.get("time"),
+                default_show.get("location_name"),
+                default_show.get("address"),
+                default_show.get("benefiting"),
+                default_show.get("suggested_donation"),
+                default_show.get("description"),
+            ),
+        )
+
+    cur.execute("SELECT id FROM shows WHERE is_active = 1 LIMIT 1")
+    active = cur.fetchone()
+    if not active:
+        cur.execute("UPDATE shows SET is_active = 0")
+        cur.execute("UPDATE shows SET is_active = 1 WHERE slug = ?", (default_show["slug"],))
+
+    conn.commit()
+    conn.close()
+
+
+def get_active_show() -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE is_active = 1 LIMIT 1").fetchone()
+    conn.close()
+    return row
+
+
+def get_show_by_id(show_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_show_by_slug(slug: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE slug = ? LIMIT 1", (slug,)).fetchone()
+    conn.close()
+    return row
+
+
+def export_show_row(show_id: int):
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def count_registered_cars(show_id: int) -> int:
+    conn = _conn()
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM show_cars WHERE show_id = ?", (show_id,)).fetchone()
+    conn.close()
+    return int(row["cnt"] or 0)
+
+
+def show_has_capacity(show_id: int) -> bool:
+    show = export_show_row(show_id)
+    if not show:
+        return False
+    max_cars = show["max_cars"] if "max_cars" in show.keys() else None
+    if max_cars is None:
+        return True
+    try:
+        max_cars = int(max_cars)
+    except Exception:
+        return True
+    if max_cars <= 0:
+        return True
+    return count_registered_cars(show_id) < max_cars
+
+
+def set_show_voting_open(show_id: int, voting_open: bool) -> None:
+    conn = _conn()
+    conn.execute("UPDATE shows SET voting_open = ? WHERE id = ?", (_b(voting_open), show_id))
+    conn.commit()
+    conn.close()
+
+
+def toggle_show_voting(show_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE shows SET voting_open = CASE voting_open WHEN 1 THEN 0 ELSE 1 END WHERE id = ?",
+        (show_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_show_admin_settings(
+    show_id: int,
+    show_type: str,
+    allow_prereg_override: Optional[int],
+    max_cars: Optional[int],
+    registration_fee_cents: int,
+    attendee_fee_cents: int,
+    vote_price_cents: int,
+    public_vote_disclosure: str,
+    public_registration_disclosure: str,
+    public_donation_disclosure: str,
+    waiver_text: str,
+    waiver_version: str,
+) -> None:
+    st = (show_type or "full").strip().lower()
+    if st not in ("popup", "full"):
+        st = "full"
+
+    if allow_prereg_override is not None:
+        try:
+            allow_prereg_override = int(allow_prereg_override)
         except Exception:
-            return False
-    if ADMIN_PASSWORD:
-        return hmac.compare_digest(ADMIN_PASSWORD, raw_password or "")
-    return False
+            allow_prereg_override = None
+        if allow_prereg_override not in (0, 1):
+            allow_prereg_override = None
+
+    if max_cars is not None:
+        try:
+            max_cars = int(max_cars)
+            if max_cars <= 0:
+                max_cars = None
+        except Exception:
+            max_cars = None
+
+    try:
+        registration_fee_cents = max(0, int(registration_fee_cents))
+    except Exception:
+        registration_fee_cents = 0
+    try:
+        attendee_fee_cents = max(0, int(attendee_fee_cents))
+    except Exception:
+        attendee_fee_cents = 0
+    try:
+        vote_price_cents = max(1, int(vote_price_cents))
+    except Exception:
+        vote_price_cents = 100
+
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET show_type = ?,
+            allow_prereg_override = ?,
+            max_cars = ?,
+            registration_fee_cents = ?,
+            attendee_fee_cents = ?,
+            vote_price_cents = ?,
+            public_vote_disclosure = ?,
+            public_registration_disclosure = ?,
+            public_donation_disclosure = ?,
+            waiver_text = ?,
+            waiver_version = ?
+        WHERE id = ?
+        """,
+        (
+            st,
+            allow_prereg_override,
+            max_cars,
+            registration_fee_cents,
+            attendee_fee_cents,
+            vote_price_cents,
+            (public_vote_disclosure or "").strip(),
+            (public_registration_disclosure or "").strip(),
+            (public_donation_disclosure or "").strip(),
+            (waiver_text or "").strip(),
+            (waiver_version or "").strip(),
+            show_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
-def rate_limit(bucket_name: str, limit: int, window_seconds: int) -> Callable:
-    def decorator(view_func: Callable) -> Callable:
-        @wraps(view_func)
-        def wrapped(*args, **kwargs):
-            ip = _client_ip() or "unknown"
-            bucket_key = f"{bucket_name}:{request.endpoint}:{ip}"
-            count = rate_limit_increment(bucket_key, window_seconds)
-            if count > limit:
-                return render_template("payment_not_complete.html"), 429 if request.accept_mimetypes.accept_html else (jsonify({"ok": False, "error": "Too many requests. Please slow down."}), 429)
-            return view_func(*args, **kwargs)
-        return wrapped
-    return decorator
+def set_show_charity_connect(show_id: int, stripe_account_id: str, connect_status: str = "connected", connect_email: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET charity_stripe_account_id = ?,
+            charity_connect_status = ?,
+            charity_connect_email = ?,
+            charity_connected_at = datetime('now')
+        WHERE id = ?
+        """,
+        ((stripe_account_id or "").strip(), (connect_status or "connected").strip(), (connect_email or "").strip(), show_id),
+    )
+    conn.commit()
+    conn.close()
 
 
-def _save_waiver_capture_html(
-    *,
-    show: Any,
-    car_number: int,
+def clear_show_charity_connect(show_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET charity_stripe_account_id = NULL,
+            charity_connect_status = 'not_connected',
+            charity_connect_email = NULL
+        WHERE id = ?
+        """,
+        (show_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+# REGISTRATION / PEOPLE
+
+def create_person(name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), consent_text, consent_version),
+    )
+    conn.commit()
+    pid = int(cur.lastrowid)
+    conn.close()
+    return pid
+
+
+def update_person(person_id: int, name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE people
+        SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, consent_text = ?, consent_version = ?
+        WHERE id = ?
+        """,
+        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), consent_text, consent_version, person_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_show_car(show_id: int, person_id: int, car_number: int, year: str, make: str, model: str) -> Tuple[int, str]:
+    conn = _conn()
+    cur = conn.cursor()
+    show = cur.execute("SELECT max_cars FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    if show and show["max_cars"] is not None:
+        try:
+            max_cars = int(show["max_cars"])
+        except Exception:
+            max_cars = None
+        if max_cars and max_cars > 0:
+            row = cur.execute("SELECT COUNT(*) AS cnt FROM show_cars WHERE show_id = ?", (show_id,)).fetchone()
+            if int(row["cnt"] or 0) >= max_cars:
+                conn.close()
+                raise ValueError("This show has reached its maximum number of cars.")
+
+    token = _new_car_token()
+    try:
+        cur.execute(
+            """
+            INSERT INTO show_cars (
+                show_id, person_id, car_number, car_token, year, make, model,
+                is_placeholder, registration_state
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'paid')
+            """,
+            (show_id, person_id, car_number, token, year, make, model),
+        )
+        conn.commit()
+        scid = int(cur.lastrowid)
+        conn.close()
+        return scid, token
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        raise ValueError("That car number is already registered for this show.") from e
+
+
+def update_show_car_details(show_car_id: int, year: str, make: str, model: str) -> None:
+    conn = _conn()
+    conn.execute("UPDATE show_cars SET year = ?, make = ?, model = ? WHERE id = ?", (year, make, model, show_car_id))
+    conn.commit()
+    conn.close()
+
+
+def mark_show_car_checked_in(show_car_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE show_cars SET registration_state = 'checked_in', checked_in_at = COALESCE(checked_in_at, datetime('now')) WHERE id = ?",
+        (show_car_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_show_car_public_by_token(show_id: int, car_token: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT sc.*, p.name as owner_name
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ? AND sc.car_token = ?
+        LIMIT 1
+        """,
+        (show_id, car_token),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_show_car_private_by_token(show_id: int, car_token: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT
+            sc.*,
+            p.name as owner_name,
+            p.phone as owner_phone,
+            p.email as owner_email,
+            p.opt_in_future,
+            p.sponsor_opt_in,
+            p.consent_text,
+            p.consent_version
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ? AND sc.car_token = ?
+        LIMIT 1
+        """,
+        (show_id, car_token),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_show_car_by_number(show_id: int, car_number: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT sc.*, p.name as owner_name
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ? AND sc.car_number = ?
+        LIMIT 1
+        """,
+        (show_id, car_number),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT
+            sc.id,
+            sc.car_number,
+            sc.year,
+            sc.make,
+            sc.model,
+            sc.car_token,
+            sc.waiver_received,
+            sc.waiver_received_at,
+            sc.waiver_received_by,
+            sc.registration_payment_status,
+            sc.registration_amount_cents,
+            sc.waiver_signed_name,
+            sc.waiver_signed_at,
+            sc.is_placeholder,
+            sc.registration_state,
+            sc.checked_in_at,
+            p.name as owner_name
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ?
+        ORDER BY sc.car_number ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+# REGISTRATION INTENTS
+
+def create_registration_intent(
+    show_id: int,
     owner_name: str,
     phone: str,
     email: str,
+    opt_in_future: bool,
+    sponsor_opt_in: bool,
+    car_number: int,
     year: str,
     make: str,
     model: str,
-    opt_in_future: bool,
-    sponsor_opt_in: bool,
+    waiver_accepted: bool,
+    waiver_signed_name: str,
     waiver_text: str,
     waiver_version: str,
-    signed_name: str,
-    intent_token: str,
-    request_path: str,
-    ip_address: str,
-    user_agent: str,
-) -> str:
-    now_local = datetime.now(ZoneInfo("America/Chicago"))
-    now_utc = datetime.now(timezone.utc)
-    ts = now_local.strftime("%Y%m%d-%H%M%S")
-    safe_token = "".join(ch for ch in intent_token if ch.isalnum())[:12] or "na"
-    filename = f"waiver_{show['slug']}_car-{car_number}_{ts}_{safe_token}.html"
-    out_path = _waiver_dir() / filename
-    waiver_hash = hashlib.sha256((waiver_text or "").encode("utf-8")).hexdigest()
+    amount_cents: int,
+) -> Tuple[int, str]:
+    conn = _conn()
+    cur = conn.cursor()
 
-    html_doc = f"""<!doctype html>
-<html lang=\"en\">
-<head>
-<meta charset=\"utf-8\">
-<title>Waiver Capture - Car #{car_number}</title>
-<style>
-body {{ font-family: Arial, Helvetica, sans-serif; line-height: 1.45; margin: 40px; color: #111827; }}
-h1, h2 {{ margin-bottom: 8px; }}
-.box {{ border: 1px solid #CBD5E1; border-radius: 12px; padding: 16px; margin-bottom: 18px; }}
-.small {{ color: #475569; font-size: 13px; }}
-pre {{ white-space: pre-wrap; font-family: Arial, Helvetica, sans-serif; }}
-</style>
-</head>
-<body>
-<h1>Electronic Waiver Capture</h1>
-<div class=\"small\">Generated {escape(now_local.isoformat())} America/Chicago / {escape(now_utc.isoformat())} UTC</div>
-<div class=\"small\">Request Path: {escape(request_path)} | IP: {escape(ip_address)} | User Agent: {escape(user_agent)}</div>
-<div class=\"box\"><h2>Show</h2>
-<div><strong>Title:</strong> {escape(str(show.get('title') or ''))}</div>
-<div><strong>Slug:</strong> {escape(str(show.get('slug') or ''))}</div>
-<div><strong>Car Number:</strong> #{car_number}</div>
-<div><strong>Vehicle:</strong> {escape(year)} {escape(make)} {escape(model)}</div>
-</div>
-<div class=\"box\"><h2>Owner</h2>
-<div><strong>Name:</strong> {escape(owner_name)}</div>
-<div><strong>Phone:</strong> {escape(phone)}</div>
-<div><strong>Email:</strong> {escape(email)}</div>
-<div><strong>Future Show Updates:</strong> {'Yes' if opt_in_future else 'No'}</div>
-<div><strong>Sponsor Information:</strong> {'Yes' if sponsor_opt_in else 'No'}</div>
-</div>
-<div class=\"box\"><h2>Waiver</h2>
-<div><strong>Waiver Version:</strong> {escape(waiver_version)}</div>
-<div><strong>Waiver SHA-256:</strong> {escape(waiver_hash)}</div>
-<pre>{escape(waiver_text)}</pre>
-</div>
-<div class=\"box\"><h2>Signature</h2>
-<div><strong>Typed Signature:</strong> {escape(signed_name)}</div>
-<div><strong>Intent Token:</strong> {escape(intent_token)}</div>
-</div>
-</body>
-</html>
-"""
-    out_path.write_text(html_doc, encoding="utf-8")
-    return str(out_path)
+    if not show_has_capacity(show_id):
+        conn.close()
+        raise ValueError("This show has reached its maximum number of cars.")
+
+    existing = cur.execute("SELECT id FROM show_cars WHERE show_id = ? AND car_number = ? LIMIT 1", (show_id, car_number)).fetchone()
+    if existing:
+        conn.close()
+        raise ValueError("That car number is already registered for this show.")
+
+    token = _new_token()
+    cur.execute(
+        """
+        INSERT INTO registration_intents (
+            show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
+            car_number, year, make, model,
+            waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
+            amount_cents, payment_status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        """,
+        (
+            show_id,
+            token,
+            owner_name,
+            phone,
+            email,
+            _b(opt_in_future),
+            _b(sponsor_opt_in),
+            car_number,
+            year,
+            make,
+            model,
+            _b(waiver_accepted),
+            waiver_signed_name,
+            waiver_text,
+            waiver_version,
+            _sha256_text(waiver_text),
+            int(amount_cents),
+        ),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid, token
 
 
-def _record_waiver_evidence(
+def get_registration_intent_by_token(intent_token: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM registration_intents WHERE intent_token = ? LIMIT 1", (intent_token,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_registration_intent_by_session(stripe_session_id: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM registration_intents WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def attach_stripe_session_to_registration_intent(registration_intent_id: int, stripe_session_id: str, stripe_payment_intent_id: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE registration_intents
+        SET stripe_session_id = ?, stripe_payment_intent_id = ?
+        WHERE id = ?
+        """,
+        (stripe_session_id, stripe_payment_intent_id or None, registration_intent_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        ri = cur.execute("SELECT * FROM registration_intents WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+        if not ri:
+            raise ValueError("Registration intent not found.")
+
+        if ri["finalized_show_car_id"]:
+            sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (int(ri["finalized_show_car_id"]),)).fetchone()
+            cur.execute(
+                "UPDATE registration_intents SET payment_status = 'paid', paid_at = COALESCE(paid_at, datetime('now')) WHERE id = ?",
+                (int(ri["id"]),),
+            )
+            conn.commit()
+            return {
+                "registration_intent_id": int(ri["id"]),
+                "show_car_id": int(ri["finalized_show_car_id"]),
+                "car_token": sc["car_token"] if sc else None,
+                "already_finalized": True,
+            }
+
+        show_id = int(ri["show_id"])
+        if not show_has_capacity(show_id):
+            raise ValueError("This show has reached its maximum number of cars.")
+
+        existing_final = cur.execute(
+            "SELECT id FROM show_cars WHERE show_id = ? AND car_number = ? LIMIT 1",
+            (show_id, int(ri["car_number"])),
+        ).fetchone()
+        if existing_final:
+            raise ValueError("That car number is already registered for this show.")
+
+        person_consent_text = (
+            "By submitting this form, you agree Karman Kar Shows & Events may contact you about this event and future "
+            "events if selected and, if chosen, may share sponsor information. Msg/data rates may apply. Opt out anytime."
+        )
+        person_consent_version = "2026-registration-flow"
+
+        cur.execute(
+            """
+            INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ri["owner_name"],
+                ri["phone"],
+                ri["email"],
+                int(ri["opt_in_future"] or 0),
+                int(ri["sponsor_opt_in"] or 0),
+                person_consent_text,
+                person_consent_version,
+            ),
+        )
+        person_id = int(cur.lastrowid)
+
+        car_token = _new_car_token()
+        cur.execute(
+            """
+            INSERT INTO show_cars (
+                show_id, person_id, car_number, car_token, year, make, model,
+                registration_payment_status, registration_amount_cents, registration_session_id,
+                waiver_signed_name, waiver_signed_at, waiver_version,
+                waiver_received, waiver_received_at, waiver_received_by,
+                is_placeholder, registration_state
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 1, datetime('now'), 'electronic', 0, 'paid')
+            """,
+            (
+                show_id,
+                person_id,
+                int(ri["car_number"]),
+                car_token,
+                ri["year"],
+                ri["make"],
+                ri["model"],
+                "paid",
+                int(ri["amount_cents"] or 0),
+                stripe_session_id,
+                ri["waiver_signed_name"],
+                ri["waiver_version"],
+            ),
+        )
+        show_car_id = int(cur.lastrowid)
+
+        cur.execute(
+            "UPDATE registration_intents SET payment_status = 'paid', paid_at = datetime('now'), finalized_show_car_id = ? WHERE id = ?",
+            (show_car_id, int(ri["id"])),
+        )
+
+        conn.commit()
+        return {
+            "registration_intent_id": int(ri["id"]),
+            "show_car_id": show_car_id,
+            "car_token": car_token,
+            "already_finalized": False,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# PLACEHOLDER CARS
+
+def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    show = cur.execute("SELECT max_cars FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    max_cars = None
+    if show and show["max_cars"] is not None:
+        try:
+            max_cars = int(show["max_cars"])
+        except Exception:
+            max_cars = None
+
+    current_count = int(cur.execute("SELECT COUNT(*) AS cnt FROM show_cars WHERE show_id = ?", (show_id,)).fetchone()["cnt"] or 0)
+    created = 0
+    for n in range(start_number, start_number + count):
+        if max_cars and max_cars > 0 and (current_count + created) >= max_cars:
+            break
+        exists = cur.execute("SELECT 1 FROM show_cars WHERE show_id = ? AND car_number = ? LIMIT 1", (show_id, n)).fetchone()
+        if exists:
+            continue
+        cur.execute(
+            "INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("", "", "", 0, 0, None, None),
+        )
+        person_id = int(cur.lastrowid)
+        token = _new_car_token()
+        cur.execute(
+            """
+            INSERT INTO show_cars (
+                show_id, person_id, car_number, car_token, year, make, model,
+                is_placeholder, registration_state
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'placeholder')
+            """,
+            (show_id, person_id, n, token, "TBD", "TBD", "TBD"),
+        )
+        created += 1
+
+    conn.commit()
+    conn.close()
+    return created
+
+
+# VOTING
+
+def create_vote_intent(show_id: int, show_car_id: int, category: str, vote_qty: int, amount_cents: int) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO vote_intents (show_id, show_car_id, category, vote_qty, amount_cents, payment_status) VALUES (?, ?, ?, ?, ?, 'pending')",
+        (show_id, show_car_id, category, vote_qty, amount_cents),
+    )
+    conn.commit()
+    vid = int(cur.lastrowid)
+    conn.close()
+    return vid
+
+
+def get_vote_intent(vote_intent_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM vote_intents WHERE id = ? LIMIT 1", (vote_intent_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_vote_intent_by_session(stripe_session_id: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM vote_intents WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def attach_stripe_session_to_vote_intent(vote_intent_id: int, stripe_session_id: str, stripe_payment_intent_id: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE vote_intents SET stripe_session_id = ?, stripe_payment_intent_id = ? WHERE id = ?",
+        (stripe_session_id, stripe_payment_intent_id or None, vote_intent_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def finalize_vote_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        vi = cur.execute("SELECT * FROM vote_intents WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+        if not vi:
+            raise ValueError("Vote intent not found.")
+        existing_vote = cur.execute("SELECT id FROM votes WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+        if not existing_vote:
+            cur.execute(
+                "INSERT INTO votes (show_id, show_car_id, category, vote_qty, amount_cents, stripe_session_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (int(vi["show_id"]), int(vi["show_car_id"]), vi["category"], int(vi["vote_qty"]), int(vi["amount_cents"]), stripe_session_id),
+            )
+        cur.execute(
+            "UPDATE vote_intents SET payment_status = 'paid', paid_at = COALESCE(paid_at, datetime('now')) WHERE id = ?",
+            (int(vi["id"]),),
+        )
+        conn.commit()
+        return {"vote_intent_id": int(vi["id"]), "already_finalized": bool(existing_vote)}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def reset_votes_for_show(show_id: int) -> None:
+    conn = _conn()
+    conn.execute("DELETE FROM votes WHERE show_id = ?", (show_id,))
+    conn.execute("DELETE FROM vote_intents WHERE show_id = ?", (show_id,))
+    conn.commit()
+    conn.close()
+
+
+def export_votes_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT
+            v.created_at,
+            v.category,
+            v.vote_qty,
+            v.amount_cents,
+            v.stripe_session_id,
+            sc.car_number,
+            sc.year,
+            sc.make,
+            sc.model,
+            p.name as owner_name,
+            p.phone as owner_phone,
+            p.email as owner_email,
+            p.opt_in_future,
+            p.sponsor_opt_in,
+            p.consent_version
+        FROM votes v
+        JOIN show_cars sc ON sc.id = v.show_car_id
+        JOIN people p ON p.id = sc.person_id
+        WHERE v.show_id = ?
+        ORDER BY v.created_at ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def leaderboard_by_category(show_id: int) -> Dict[str, List[Tuple[int, int]]]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT v.category, sc.car_number, SUM(v.vote_qty) as total_votes
+        FROM votes v
+        JOIN show_cars sc ON sc.id = v.show_car_id
+        WHERE v.show_id = ?
+        GROUP BY v.category, sc.car_number
+        ORDER BY v.category ASC, total_votes DESC, sc.car_number ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    out: Dict[str, List[Tuple[int, int]]] = {}
+    for r in rows:
+        out.setdefault(r["category"], [])
+        out[r["category"]].append((int(r["car_number"]), int(r["total_votes"] or 0)))
+    return out
+
+
+def leaderboard_overall(show_id: int) -> List[Tuple[int, int]]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT sc.car_number, SUM(v.vote_qty) as total_votes
+        FROM votes v
+        JOIN show_cars sc ON sc.id = v.show_car_id
+        WHERE v.show_id = ?
+        GROUP BY sc.car_number
+        ORDER BY total_votes DESC, sc.car_number ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    return [(int(r["car_number"]), int(r["total_votes"] or 0)) for r in rows]
+
+
+# SPONSORS
+
+def upsert_sponsor(name: str, logo_path: str = "", website_url: str = "") -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    existing = cur.execute("SELECT id FROM sponsors WHERE name = ? LIMIT 1", (name,)).fetchone()
+    if existing:
+        cur.execute("UPDATE sponsors SET logo_path = ?, website_url = ? WHERE id = ?", (logo_path, website_url, int(existing["id"])))
+        conn.commit()
+        conn.close()
+        return int(existing["id"])
+    cur.execute("INSERT INTO sponsors (name, logo_path, website_url) VALUES (?, ?, ?)", (name, logo_path, website_url))
+    conn.commit()
+    sid = int(cur.lastrowid)
+    conn.close()
+    return sid
+
+
+def attach_sponsor_to_show(show_id: int, sponsor_id: int, placement: str = "standard", sort_order: int = 100) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        INSERT INTO show_sponsors (show_id, sponsor_id, placement, sort_order)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(show_id, sponsor_id) DO UPDATE SET
+          placement=excluded.placement,
+          sort_order=excluded.sort_order
+        """,
+        (show_id, sponsor_id, placement, sort_order),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_sponsor_from_show(show_id: int, sponsor_id: int) -> None:
+    conn = _conn()
+    conn.execute("DELETE FROM show_sponsors WHERE show_id = ? AND sponsor_id = ?", (show_id, sponsor_id))
+    conn.commit()
+    conn.close()
+
+
+def set_title_sponsor(show_id: int, sponsor_id: int) -> None:
+    conn = _conn()
+    conn.execute("UPDATE show_sponsors SET placement = 'standard' WHERE show_id = ? AND placement = 'title'", (show_id,))
+    conn.commit()
+    conn.close()
+    attach_sponsor_to_show(show_id, sponsor_id, placement="title", sort_order=0)
+
+
+def get_show_sponsors(show_id: int):
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT
+            s.id as sponsor_id,
+            s.name,
+            s.logo_path,
+            s.website_url,
+            ss.placement,
+            ss.sort_order
+        FROM show_sponsors ss
+        JOIN sponsors s ON s.id = ss.sponsor_id
+        WHERE ss.show_id = ?
+        ORDER BY CASE WHEN ss.placement = 'title' THEN 0 ELSE 1 END, ss.sort_order ASC, s.id ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    title = None
+    sponsors = []
+    for r in rows:
+        item = {
+            "id": int(r["sponsor_id"]),
+            "name": r["name"],
+            "logo_path": r["logo_path"],
+            "website_url": r["website_url"],
+            "placement": r["placement"],
+            "sort_order": int(r["sort_order"] or 0),
+        }
+        if item["placement"] == "title" and title is None:
+            title = item
+        else:
+            sponsors.append(item)
+    return title, sponsors
+
+
+# ATTENDEES + DONATIONS + METRICS
+
+def create_attendee(show_id: int, first_name: str, last_name: str, phone: str, email: str, zip_code: str, sponsor_opt_in: bool, updates_opt_in: bool, consent_text: str, consent_version: str) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO attendees
+        (show_id, first_name, last_name, phone, email, zip, sponsor_opt_in, updates_opt_in, consent_text, consent_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (show_id, first_name, last_name, phone or None, email or None, zip_code or None, _b(sponsor_opt_in), _b(updates_opt_in), consent_text, consent_version),
+    )
+    conn.commit()
+    aid = int(cur.lastrowid)
+    conn.close()
+    return aid
+
+
+def record_field_metric(show_id: int, field_name: str, was_provided: bool) -> None:
+    conn = _conn()
+    conn.execute("INSERT INTO field_metrics (show_id, field_name, was_provided) VALUES (?, ?, ?)", (show_id, field_name, _b(was_provided)))
+    conn.commit()
+    conn.close()
+
+
+def create_donation_row(show_id: int, attendee_id: int, amount_cents: int, status: str) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO donations (show_id, attendee_id, amount_cents, status) VALUES (?, ?, ?, ?)", (show_id, attendee_id, int(amount_cents), status))
+    conn.commit()
+    did = int(cur.lastrowid)
+    conn.close()
+    return did
+
+
+def get_donation_by_id(donation_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM donations WHERE id = ? LIMIT 1", (donation_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_donation_by_session(stripe_session_id: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM donations WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def attach_stripe_session_to_donation(donation_id: int, stripe_session_id: str, stripe_payment_intent_id: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE donations SET stripe_session_id = ?, stripe_payment_intent_id = ? WHERE id = ?",
+        (stripe_session_id, stripe_payment_intent_id or None, donation_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_donation_paid(stripe_session_id: str) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE donations SET status = 'paid', paid_at = COALESCE(paid_at, datetime('now')) WHERE stripe_session_id = ?",
+        (stripe_session_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+# WAIVER TRACKING / AUDIT / RATE LIMITING
+
+def waiver_mark_received(show_id: int, show_car_id: int, received_by: str) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE show_cars
+        SET waiver_received = 1,
+            waiver_received_at = datetime('now'),
+            waiver_received_by = ?
+        WHERE id = ? AND show_id = ?
+        """,
+        (received_by or "staff", show_car_id, show_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_waiver_evidence_record(
     *,
-    show: Any,
+    show_id: int,
     registration_intent_id: Optional[int],
     show_car_id: Optional[int],
     car_number: int,
@@ -428,1309 +1429,331 @@ def _record_waiver_evidence(
     model: str,
     opt_in_future: bool,
     sponsor_opt_in: bool,
-    waiver_text: str,
     waiver_version: str,
+    waiver_text: str,
     signed_name: str,
+    waiver_accepted: bool,
     intent_token: str,
     html_path: str,
-) -> None:
-    now_local = datetime.now(ZoneInfo("America/Chicago")).isoformat()
-    now_utc = datetime.now(timezone.utc).isoformat()
-    create_waiver_evidence_record(
-        show_id=int(show["id"]),
-        registration_intent_id=registration_intent_id,
-        show_car_id=show_car_id,
-        car_number=car_number,
-        owner_name=owner_name,
-        phone=phone,
-        email=email,
-        year=year,
-        make=make,
-        model=model,
-        opt_in_future=opt_in_future,
-        sponsor_opt_in=sponsor_opt_in,
-        waiver_version=waiver_version,
-        waiver_text=waiver_text,
-        signed_name=signed_name,
-        waiver_accepted=True,
-        intent_token=intent_token,
-        html_path=html_path,
-        request_path=request.path,
-        ip_address=_client_ip(),
-        user_agent=_user_agent(),
-        created_at_utc=now_utc,
-        created_at_local=now_local,
-    )
-
-
-def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int) -> Dict[str, Any]:
-    conn = _conn_direct()
+    request_path: str,
+    ip_address: str,
+    user_agent: str,
+    created_at_utc: str,
+    created_at_local: str,
+) -> int:
+    conn = _conn()
     cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO waiver_evidence (
+            show_id, registration_intent_id, show_car_id, car_number,
+            owner_name, phone, email, year, make, model,
+            opt_in_future, sponsor_opt_in,
+            waiver_version, waiver_text_sha256, signed_name, waiver_accepted,
+            intent_token, html_path, request_path, ip_address, user_agent,
+            created_at_utc, created_at_local
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            show_id,
+            registration_intent_id,
+            show_car_id,
+            car_number,
+            owner_name,
+            phone,
+            email,
+            year,
+            make,
+            model,
+            _b(opt_in_future),
+            _b(sponsor_opt_in),
+            waiver_version,
+            _sha256_text(waiver_text),
+            signed_name,
+            _b(waiver_accepted),
+            intent_token,
+            html_path,
+            request_path,
+            ip_address,
+            user_agent,
+            created_at_utc,
+            created_at_local,
+        ),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
+
+
+def log_audit_event(show_id: Optional[int], actor_type: str, action: str, details: Optional[Dict[str, Any]], ip_address: str, user_agent: str) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO audit_logs (show_id, actor_type, action, details_json, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            show_id,
+            (actor_type or "system")[:50],
+            (action or "unknown")[:100],
+            json.dumps(details or {}, ensure_ascii=False),
+            (ip_address or "")[:255],
+            (user_agent or "")[:1000],
+        ),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
+
+
+def rate_limit_increment(bucket_key: str, window_seconds: int) -> int:
+    now_epoch = int(datetime.utcnow().timestamp())
+    window_started_at = now_epoch - (now_epoch % max(1, int(window_seconds)))
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO rate_limit_hits (bucket_key, window_started_at, hit_count)
+        VALUES (?, ?, 1)
+        ON CONFLICT(bucket_key, window_started_at)
+        DO UPDATE SET hit_count = hit_count + 1, updated_at = datetime('now')
+        """,
+        (bucket_key, window_started_at),
+    )
+    row = cur.execute(
+        "SELECT hit_count FROM rate_limit_hits WHERE bucket_key = ? AND window_started_at = ? LIMIT 1",
+        (bucket_key, window_started_at),
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return int(row["hit_count"] or 0)
+
+
+def has_processed_webhook_event(stripe_event_id: str) -> bool:
+    conn = _conn()
+    row = conn.execute("SELECT 1 FROM processed_webhook_events WHERE stripe_event_id = ? LIMIT 1", (stripe_event_id,)).fetchone()
+    conn.close()
+    return bool(row)
+
+
+def mark_webhook_event_processed(stripe_event_id: str, event_type: str) -> None:
+    conn = _conn()
     try:
-        cur.execute("BEGIN IMMEDIATE")
-        ri = cur.execute("SELECT * FROM registration_intents WHERE stripe_session_id = ? LIMIT 1", (stripe_session_id,)).fetchone()
-        if not ri:
-            raise ValueError("Registration intent not found.")
-        if ri["finalized_show_car_id"]:
-            sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (int(ri["finalized_show_car_id"]),)).fetchone()
-            conn.commit()
-            return {"show_car_id": int(ri["finalized_show_car_id"]), "car_token": sc["car_token"] if sc else None, "already_finalized": True}
-
-        sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (show_car_id,)).fetchone()
-        if not sc:
-            raise ValueError("Placeholder car not found.")
-        person_id = int(sc["person_id"])
-
-        cur.execute(
-            """
-            UPDATE people
-            SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, consent_text = ?, consent_version = ?
-            WHERE id = ?
-            """,
-            (
-                ri["owner_name"],
-                ri["phone"],
-                ri["email"],
-                int(ri["opt_in_future"] or 0),
-                int(ri["sponsor_opt_in"] or 0),
-                CONSENT_TEXT_CAR_OWNER,
-                CONSENT_VERSION,
-                person_id,
-            ),
-        )
-
-        cur.execute(
-            """
-            UPDATE show_cars
-            SET year = ?,
-                make = ?,
-                model = ?,
-                registration_payment_status = 'paid',
-                registration_amount_cents = ?,
-                registration_session_id = ?,
-                waiver_signed_name = ?,
-                waiver_signed_at = datetime('now'),
-                waiver_version = ?,
-                waiver_received = 1,
-                waiver_received_at = datetime('now'),
-                waiver_received_by = 'electronic',
-                is_placeholder = 0,
-                registration_state = 'paid'
-            WHERE id = ?
-            """,
-            (
-                ri["year"], ri["make"], ri["model"], int(ri["amount_cents"] or 0), stripe_session_id,
-                ri["waiver_signed_name"], ri["waiver_version"], show_car_id,
-            ),
-        )
-
-        cur.execute(
-            "UPDATE registration_intents SET payment_status = 'paid', paid_at = datetime('now'), finalized_show_car_id = ? WHERE id = ?",
-            (show_car_id, int(ri["id"])),
+        conn.execute(
+            "INSERT INTO processed_webhook_events (stripe_event_id, event_type) VALUES (?, ?)",
+            (stripe_event_id, event_type),
         )
         conn.commit()
-        return {"show_car_id": show_car_id, "car_token": sc["car_token"], "already_finalized": False}
-    except Exception:
-        conn.rollback()
-        raise
+    except sqlite3.IntegrityError:
+        pass
     finally:
         conn.close()
+# ===============================
+# UPCOMING EVENT / INTEREST SIGNUPS
+# ===============================
+
+def get_upcoming_event() -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM upcoming_event
+        WHERE id = 1 AND is_active = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    conn.close()
+    return row
 
 
-def require_admin(view_func):
-    @wraps(view_func)
-    def wrapped(*args, **kwargs):
-        if not session.get("admin_authed"):
-            return redirect(url_for("admin_page", next=request.path))
-        return view_func(*args, **kwargs)
-    return wrapped
-
-
-def _maybe_auto_close_voting() -> None:
-    end_raw = os.getenv("VOTING_END", "").strip()
-    if not end_raw:
-        return
-    show = get_active_show()
-    if not show or int(show["voting_open"]) != 1:
-        return
-    try:
-        end_dt = datetime.strptime(end_raw, "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("America/Chicago"))
-        if datetime.now(ZoneInfo("America/Chicago")) >= end_dt:
-            set_show_voting_open(int(show["id"]), False)
-    except Exception:
-        return
-
-
-@app.context_processor
-def inject_globals():
-    show = get_active_show()
-    title_sponsor, sponsors = (None, [])
-    registered_cars = 0
-    if show:
-        title_sponsor, sponsors = get_show_sponsors(int(show["id"])) or (None, [])
-        registered_cars = count_registered_cars(int(show["id"]))
-    return {
-        "active_show": show,
-        "CATEGORY_SLUGS": CATEGORY_SLUGS,
-        "CATEGORY_NAMES": list(CATEGORY_SLUGS.values()),
-        "title_sponsor": title_sponsor,
-        "sponsors": sponsors,
-        "is_admin": session.get("admin_authed", False),
-        "prereg_allowed": prereg_allowed,
-        "registered_cars": registered_cars,
-    }
-
-
-@app.get("/")
-def home():
-    show = get_active_show()
-    if not show:
-        return "No active show configured.", 500
-    return render_template("home.html", show=show)
-
-
-@app.get("/instructions/<show_slug>")
-def voting_instructions(show_slug: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    return render_template("voting_instructions.html", show=show)
-
-
-@app.get("/events")
-def events():
-    return render_template(
-        "events.html",
-        show=get_active_show(),
-        upcoming_event=_get_upcoming_event_for_display(),
-        hide_nav=True,
-    )
-
-
-@app.post("/event-updates-signup")
-@rate_limit("event_updates_signup", 20, 300)
-def event_updates_signup():
-    first_name = request.form.get("first_name", "").strip()
-    last_name = request.form.get("last_name", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    phone = request.form.get("phone", "").strip()
-    wants_email = 1 if request.form.get("wants_email") else 0
-    wants_text = 1 if request.form.get("wants_text") else 0
-    source = request.form.get("source", "").strip() or "website"
-
-    if not first_name:
-        flash("First name is required.", "error")
-        return redirect(url_for("events"))
-
-    if not email and not phone:
-        flash("Please provide an email address, a mobile phone number, or both.", "error")
-        return redirect(url_for("events"))
-
-    if wants_email and not email:
-        flash("Email is required if you want email updates.", "error")
-        return redirect(url_for("events"))
-
-    if wants_text and not phone:
-        flash("Mobile phone is required if you want text updates.", "error")
-        return redirect(url_for("events"))
-
-    create_event_interest_signup(
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=phone,
-        wants_email=wants_email,
-        wants_text=wants_text,
-        source=source,
-    )
-
-    # FUTURE DRIP / AUTO-MESSAGING PLACEHOLDER
-    # ----------------------------------------
-    # if wants_email and email:
-    #     send_upcoming_event_email(
-    #         to_email=email,
-    #         first_name=first_name,
-    #     )
-    #
-    # if wants_text and phone:
-    #     send_upcoming_event_text(
-    #         to_phone=phone,
-    #         first_name=first_name,
-    #     )
-
-    flash("You're on the list. Updates and reminders coming soon.", "ok")
-    return redirect(url_for("events"))
-
-
-@app.get("/show/<slug>")
-def show_page(slug: str):
-    show = get_show_by_slug(slug)
-    if not show:
-        return render_template("show.html", show={"title": "Show Not Found"}, not_found=True)
-    return render_template("show.html", show=show, cars=list_show_cars_public(int(show["id"])), not_found=False)
-
-
-@app.get("/register")
-def register_page():
-    show = get_active_show()
-    if not show:
-        return "No active show configured.", 500
-    if not prereg_allowed(show):
-        return render_template("registration_closed.html", show=show), 403
-    if not show_has_capacity(int(show["id"])):
-        return render_template("registration_closed.html", show=show, error="This show is full."), 403
-    return render_template("register.html", show=show)
-
-
-@app.post("/register")
-@rate_limit("register", 20, 300)
-def register_submit():
-    show = get_active_show()
-    if not show:
-        return "No active show configured.", 500
-    if not prereg_allowed(show):
-        return render_template("registration_closed.html", show=show), 403
-    if not show_has_capacity(int(show["id"])):
-        return render_template("register.html", show=show, error="This show has reached its maximum number of cars.")
-
-    name = request.form.get("name", "").strip()
-    phone = request.form.get("phone", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    opt_in_future = request.form.get("opt_in_future", "") == "on"
-    sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
-    car_number_raw = request.form.get("car_number", "").strip()
-    year = request.form.get("year", "").strip()
-    make = request.form.get("make", "").strip()
-    model = request.form.get("model", "").strip()
-    waiver_accepted = request.form.get("waiver_accepted", "") == "on"
-    waiver_signed_name = request.form.get("waiver_signed_name", "").strip()
-
-    if not (name and car_number_raw and year and make and model and waiver_signed_name):
-        return render_template("register.html", show=show, error="Please fill out all required fields.")
-    if (opt_in_future or sponsor_opt_in) and not phone:
-        return render_template("register.html", show=show, error="Phone number is required if you opt in to updates or sponsor information.")
-    if not waiver_accepted:
-        return render_template("register.html", show=show, error="You must accept the waiver to continue.")
-    try:
-        car_number = int(car_number_raw)
-        if car_number <= 0:
-            raise ValueError()
-    except ValueError:
-        return render_template("register.html", show=show, error="Car number must be a positive number.")
-
-    registration_fee_cents = int(show["registration_fee_cents"] or 0)
-    waiver_text = (show["waiver_text"] or "").strip()
-    waiver_version = (show["waiver_version"] or "").strip()
-    try:
-        registration_intent_id, intent_token = create_registration_intent(
-            show_id=int(show["id"]), owner_name=name, phone=phone, email=email,
-            opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-            car_number=car_number, year=year, make=make, model=model,
-            waiver_accepted=waiver_accepted, waiver_signed_name=waiver_signed_name,
-            waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+def save_upcoming_event(
+    title: str,
+    event_date: str,
+    event_time: str,
+    location_name: str,
+    address: str,
+    description: str,
+    cta_label: str = "",
+    cta_url: str = "",
+    is_active: bool = True,
+) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        INSERT INTO upcoming_event (
+            id, title, event_date, event_time, location_name, address,
+            description, cta_label, cta_url, is_active, updated_at
         )
-    except ValueError as e:
-        return render_template("register.html", show=show, error=str(e))
-
-    html_path = _save_waiver_capture_html(
-        show=show, car_number=car_number, owner_name=name, phone=phone, email=email,
-        year=year, make=make, model=model, opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-        waiver_text=waiver_text, waiver_version=waiver_version, signed_name=waiver_signed_name,
-        intent_token=intent_token, request_path=request.path, ip_address=_client_ip(), user_agent=_user_agent(),
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            event_date = excluded.event_date,
+            event_time = excluded.event_time,
+            location_name = excluded.location_name,
+            address = excluded.address,
+            description = excluded.description,
+            cta_label = excluded.cta_label,
+            cta_url = excluded.cta_url,
+            is_active = excluded.is_active,
+            updated_at = datetime('now')
+        """,
+        (
+            (title or "").strip(),
+            (event_date or "").strip(),
+            (event_time or "").strip(),
+            (location_name or "").strip(),
+            (address or "").strip(),
+            (description or "").strip(),
+            (cta_label or "").strip(),
+            (cta_url or "").strip(),
+            _b(is_active),
+        ),
     )
-    _record_waiver_evidence(
-        show=show, registration_intent_id=registration_intent_id, show_car_id=None, car_number=car_number,
-        owner_name=name, phone=phone, email=email, year=year, make=make, model=model,
-        opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in, waiver_text=waiver_text,
-        waiver_version=waiver_version, signed_name=waiver_signed_name, intent_token=intent_token, html_path=html_path,
-    )
-
-    if registration_fee_cents <= 0:
-        synthetic_session_id = f"free_reg_{intent_token}"
-        attach_stripe_session_to_registration_intent(registration_intent_id, synthetic_session_id, stripe_payment_intent_id="")
-        result = finalize_registration_intent_paid(synthetic_session_id)
-        car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-        _log_event("registration.free_finalized", int(show["id"]), {"car_number": car_number, "registration_intent_id": registration_intent_id}, actor_type="public")
-        return render_template("register_success.html", show=show, car=car)
-
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("register.html", show=show, error="This show does not have a charity payment account connected yet. Please contact the organizer.")
-    _require_platform_stripe()
-    success_url = _abs_url(url_for("registration_success", show_slug=show["slug"], intent_token=intent_token)) + "?session_id={CHECKOUT_SESSION_ID}"
-    cancel_url = _abs_url(url_for("register_page"))
-    session_obj = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']}"}}, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "payment_item_type": "registration",
-            "show_id": str(show["id"]),
-            "show_slug": show["slug"],
-            "registration_intent_id": str(registration_intent_id),
-            "intent_token": intent_token,
-        },
-        stripe_account=acct,
-    )
-    attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
+    conn.commit()
+    conn.close()
 
 
-@app.get("/register-success/<show_slug>/<intent_token>")
-def registration_success(show_slug: str, intent_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    ri = get_registration_intent_by_token(intent_token)
-    if not ri or int(ri["show_id"]) != int(show["id"]):
-        return "Registration not found.", 404
-    session_id = request.args.get("session_id", "").strip()
-    if ri["finalized_show_car_id"]:
-        result = finalize_registration_intent_paid(ri["stripe_session_id"])
-        car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-        return render_template("register_success.html", show=show, car=car)
-    if not session_id:
-        return render_template("payment_not_complete.html")
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("payment_not_complete.html")
-    _require_platform_stripe()
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
-    except Exception:
-        return render_template("payment_not_complete.html")
-    if sess.payment_status != "paid":
-        return render_template("payment_not_complete.html")
-    result = finalize_registration_intent_paid(sess.id)
-    car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-    return render_template("register_success.html", show=show, car=car)
-
-
-@app.get("/claim/<show_slug>/<car_token>")
-def placeholder_claim_page(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car = get_show_car_private_by_token(int(show["id"]), car_token)
-    if not car:
-        return "Car not found.", 404
-    return render_template("placeholder_claim.html", show=show, car=car)
-
-
-@app.post("/claim/<show_slug>/<car_token>")
-@rate_limit("claim", 20, 300)
-def placeholder_claim_submit(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car = get_show_car_private_by_token(int(show["id"]), car_token)
-    if not car:
-        return "Car not found.", 404
-
-    owner_name = request.form.get("name", "").strip()
-    phone = request.form.get("phone", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    opt_in_future = request.form.get("opt_in_future", "") == "on"
-    sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
-    year = request.form.get("year", "").strip()
-    make = request.form.get("make", "").strip()
-    model = request.form.get("model", "").strip()
-    waiver_accepted = request.form.get("waiver_accepted", "") == "on"
-    waiver_signed_name = request.form.get("waiver_signed_name", "").strip()
-
-    if not (owner_name and year and make and model and waiver_signed_name):
-        return render_template("placeholder_claim.html", show=show, car=car, error="Please fill out all required fields.")
-    if (opt_in_future or sponsor_opt_in) and not phone:
-        return render_template("placeholder_claim.html", show=show, car=car, error="Phone number is required if you opt in to updates or sponsor information.")
-    if not waiver_accepted:
-        return render_template("placeholder_claim.html", show=show, car=car, error="You must accept the waiver to continue.")
-
-    car_number = int(car["car_number"])
-    registration_fee_cents = int(show["registration_fee_cents"] or 0)
-    waiver_text = (show["waiver_text"] or "").strip()
-    waiver_version = (show["waiver_version"] or "").strip()
-    try:
-        registration_intent_id, intent_token = create_registration_intent(
-            show_id=int(show["id"]), owner_name=owner_name, phone=phone, email=email,
-            opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-            car_number=car_number, year=year, make=make, model=model,
-            waiver_accepted=True, waiver_signed_name=waiver_signed_name,
-            waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+def create_event_interest_signup(
+    *,
+    first_name: str,
+    last_name: str,
+    email: str,
+    phone: str,
+    wants_email: bool,
+    wants_text: bool,
+    source: str = "",
+) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO event_interest_signups (
+            first_name, last_name, email, phone,
+            wants_email, wants_text, source
         )
-    except ValueError:
-        conn = _conn_direct()
-        cur = conn.cursor()
-        try:
-            intent_token = secrets.token_urlsafe(18)
-            cur.execute(
-                """
-                INSERT INTO registration_intents (
-                    show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
-                    car_number, year, make, model,
-                    waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
-                    amount_cents, payment_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                """,
-                (
-                    int(show["id"]), intent_token, owner_name, phone, email, 1 if opt_in_future else 0, 1 if sponsor_opt_in else 0,
-                    car_number, year, make, model, 1, waiver_signed_name, waiver_text, waiver_version,
-                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest(), registration_fee_cents,
-                ),
-            )
-            conn.commit()
-            registration_intent_id = int(cur.lastrowid)
-        finally:
-            conn.close()
-
-    html_path = _save_waiver_capture_html(
-        show=show, car_number=car_number, owner_name=owner_name, phone=phone, email=email,
-        year=year, make=make, model=model, opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-        waiver_text=waiver_text, waiver_version=waiver_version, signed_name=waiver_signed_name,
-        intent_token=intent_token, request_path=request.path, ip_address=_client_ip(), user_agent=_user_agent(),
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            (first_name or "").strip(),
+            (last_name or "").strip(),
+            (email or "").strip(),
+            (phone or "").strip(),
+            _b(wants_email),
+            _b(wants_text),
+            (source or "").strip(),
+        ),
     )
-    _record_waiver_evidence(
-        show=show, registration_intent_id=registration_intent_id, show_car_id=int(car["id"]), car_number=car_number,
-        owner_name=owner_name, phone=phone, email=email, year=year, make=make, model=model,
-        opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in, waiver_text=waiver_text,
-        waiver_version=waiver_version, signed_name=waiver_signed_name, intent_token=intent_token, html_path=html_path,
-    )
-
-    if registration_fee_cents <= 0:
-        synthetic_session_id = f"free_claim_{intent_token}"
-        attach_stripe_session_to_registration_intent(registration_intent_id, synthetic_session_id, stripe_payment_intent_id="")
-        result = _finalize_placeholder_claim_paid(stripe_session_id=synthetic_session_id, show_car_id=int(car["id"]))
-        final_car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-        return render_template("placeholder_claim_success.html", show=show, car=final_car)
-
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("placeholder_claim.html", show=show, car=car, error="This show does not have a charity payment account connected yet. Please contact the organizer.")
-    _require_platform_stripe()
-    success_url = _abs_url(url_for("placeholder_claim_success", show_slug=show["slug"], intent_token=intent_token)) + "?session_id={CHECKOUT_SESSION_ID}"
-    cancel_url = _abs_url(url_for("placeholder_claim_page", show_slug=show["slug"], car_token=car_token))
-    session_obj = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']} (Car #{car_number})"}}, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "payment_item_type": "placeholder_claim",
-            "show_id": str(show["id"]),
-            "show_slug": show["slug"],
-            "registration_intent_id": str(registration_intent_id),
-            "intent_token": intent_token,
-            "show_car_id": str(car["id"]),
-            "car_token": car_token,
-        },
-        stripe_account=acct,
-    )
-    attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
 
 
-@app.get("/claim-success/<show_slug>/<intent_token>")
-def placeholder_claim_success(show_slug: str, intent_token: str):
-    show = get_show_by_slug(show_slug)
+# SNAPSHOT EXPORT
+
+def export_people_rows_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT DISTINCT p.*
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ?
+        ORDER BY p.created_at ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def export_show_cars_rows(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT
+            sc.*,
+            p.name as owner_name,
+            p.phone as owner_phone,
+            p.email as owner_email,
+            p.opt_in_future,
+            p.sponsor_opt_in,
+            p.consent_version,
+            p.consent_text
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ?
+        ORDER BY sc.car_number ASC
+        """,
+        (show_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def export_registration_intents_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute("SELECT * FROM registration_intents WHERE show_id = ? ORDER BY created_at ASC", (show_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def export_vote_intents_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute("SELECT * FROM vote_intents WHERE show_id = ? ORDER BY created_at ASC", (show_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def export_donations_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute("SELECT * FROM donations WHERE show_id = ? ORDER BY created_at ASC", (show_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def build_snapshot_zip_bytes(show_id: int):
+    show = export_show_row(show_id)
     if not show:
-        return "Show not found.", 404
-    ri = get_registration_intent_by_token(intent_token)
-    if not ri or int(ri["show_id"]) != int(show["id"]):
-        return "Registration not found.", 404
-    session_id = request.args.get("session_id", "").strip()
-    if ri["finalized_show_car_id"]:
-        conn = _conn_direct()
-        try:
-            sc = conn.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (int(ri["finalized_show_car_id"]),)).fetchone()
-        finally:
-            conn.close()
-        if not sc:
-            return render_template("payment_not_complete.html")
-        car = get_show_car_public_by_token(int(show["id"]), sc["car_token"])
-        return render_template("placeholder_claim_success.html", show=show, car=car)
-    if not session_id:
-        return render_template("payment_not_complete.html")
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("payment_not_complete.html")
-    _require_platform_stripe()
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
-    except Exception:
-        return render_template("payment_not_complete.html")
-    if sess.payment_status != "paid":
-        return render_template("payment_not_complete.html")
-    md = sess.metadata or {}
-    show_car_id = int(md.get("show_car_id", "0") or "0")
-    if not show_car_id:
-        return render_template("payment_not_complete.html")
-    result = _finalize_placeholder_claim_paid(stripe_session_id=sess.id, show_car_id=show_car_id)
-    car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-    return render_template("placeholder_claim_success.html", show=show, car=car)
+        raise ValueError("Show not found")
+
+    cars = export_show_cars_rows(show_id)
+    people = export_people_rows_for_show(show_id)
+    votes = export_votes_for_show(show_id)
+    registration_intents = export_registration_intents_for_show(show_id)
+    vote_intents = export_vote_intents_for_show(show_id)
+    donations = export_donations_for_show(show_id)
+
+    slug = show["slug"]
+    ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    zip_name = f"{slug}-snapshot-{ts}Z.zip"
+    mem = io.BytesIO()
+
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        show_buf = io.StringIO()
+        sw = csv.writer(show_buf)
+        cols = list(show.keys())
+        sw.writerow(cols)
+        sw.writerow([show[c] for c in cols])
+        z.writestr("show.csv", show_buf.getvalue().encode("utf-8"))
+
+        def write_rows(filename: str, rows: List[sqlite3.Row]) -> None:
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            if rows:
+                cols_local = list(rows[0].keys())
+                w.writerow(cols_local)
+                for r in rows:
+                    w.writerow([r[c] for c in cols_local])
+            z.writestr(filename, buf.getvalue().encode("utf-8"))
+
+        write_rows("cars.csv", cars)
+        write_rows("people.csv", people)
+        write_rows("votes.csv", votes)
+        write_rows("registration_intents.csv", registration_intents)
+        write_rows("vote_intents.csv", vote_intents)
+        write_rows("donations.csv", donations)
 
-
-@app.get("/r/<show_slug>/<car_token>")
-def registration_complete(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car = get_show_car_public_by_token(int(show["id"]), car_token)
-    if not car:
-        return "Car not found.", 404
-    return render_template("registration_complete.html", show=show, car=car)
-
-
-@app.get("/car-card/<slug>/<token>", endpoint="car_card")
-def car_card(slug: str, token: str):
-    show = get_show_by_slug(slug)
-    if not show:
-        return "Show not found.", 404
-    car = get_show_car_public_by_token(int(show["id"]), token)
-    if not car:
-        return "Car not found.", 404
-    return render_template("registration_complete.html", show=show, car=car)
-
-
-@app.get("/checkin/<show_slug>/<car_token>")
-def checkin_page(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car_private = get_show_car_private_by_token(int(show["id"]), car_token)
-    if not car_private:
-        return "Car not found.", 404
-    return render_template("checkin.html", show=show, car=car_private)
-
-
-@app.post("/checkin/<show_slug>/<car_token>")
-@rate_limit("checkin", 30, 300)
-def checkin_submit(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car_private = get_show_car_private_by_token(int(show["id"]), car_token)
-    if not car_private:
-        return "Car not found.", 404
-    name = request.form.get("name", "").strip()
-    phone = request.form.get("phone", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    opt_in_future = request.form.get("opt_in_future", "") == "on"
-    year = request.form.get("year", "").strip()
-    make = request.form.get("make", "").strip()
-    model = request.form.get("model", "").strip()
-    if not (name and phone and email and year and make and model):
-        return render_template("checkin.html", show=show, car=car_private, error="Please fill out all required fields.")
-    update_person(
-        person_id=int(car_private["person_id"]), name=name, phone=phone, email=email,
-        opt_in_future=opt_in_future,
-        sponsor_opt_in=bool(car_private["sponsor_opt_in"]) if "sponsor_opt_in" in car_private.keys() else False,
-        consent_text=car_private["consent_text"] if "consent_text" in car_private.keys() else CONSENT_TEXT_CAR_OWNER,
-        consent_version=car_private["consent_version"] if "consent_version" in car_private.keys() else CONSENT_VERSION,
-    )
-    update_show_car_details(int(car_private["id"]), year=year, make=make, model=model)
-    mark_show_car_checked_in(int(car_private["id"]))
-    _log_event("checkin.completed", int(show["id"]), {"show_car_id": int(car_private["id"]), "car_number": int(car_private["car_number"])}, actor_type="public")
-    car_private2 = get_show_car_private_by_token(int(show["id"]), car_token)
-    return render_template("checkin.html", show=show, car=car_private2, success="Check-in complete. You're all set!")
-
-
-@app.get("/waiver/<show_slug>/<car_token>")
-def waiver_print(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    car = get_show_car_private_by_token(int(show["id"]), car_token)
-    if not car:
-        return "Car not found.", 404
-    return render_template("waiver_print.html", show=show, car=car)
-
-
-@app.get("/attend/<show_slug>")
-def attendee_page(show_slug: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    return render_template("attendee.html", show=show)
-
-
-@app.post("/attend/<show_slug>")
-@rate_limit("attendee", 30, 300)
-def attendee_submit(show_slug: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    first_name = request.form.get("first_name", "").strip()
-    last_name = request.form.get("last_name", "").strip()
-    phone = request.form.get("phone", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    zip_code = request.form.get("zip", "").strip()
-    sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
-    updates_opt_in = request.form.get("updates_opt_in", "") == "on"
-    if not (first_name and last_name):
-        return render_template("attendee.html", show=show, error="First and last name are required.")
-    if (sponsor_opt_in or updates_opt_in) and not phone:
-        return render_template("attendee.html", show=show, error="Phone number is required if you choose to receive updates or sponsor information.")
-    attendee_id = create_attendee(int(show["id"]), first_name, last_name, phone, email, zip_code, sponsor_opt_in, updates_opt_in, ATTENDEE_CONSENT_TEXT, ATTENDEE_CONSENT_VERSION)
-    record_field_metric(int(show["id"]), "phone", bool(phone))
-    record_field_metric(int(show["id"]), "email", bool(email))
-    return redirect(url_for("attendee_fee_page", show_slug=show_slug, attendee_id=attendee_id))
-
-
-@app.get("/attend/<show_slug>/fee/<int:attendee_id>")
-def attendee_fee_page(show_slug: str, attendee_id: int):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    return render_template("attendee_fee.html", show=show, attendee_id=attendee_id)
-
-
-@app.get("/attend/<show_slug>/donate/<int:attendee_id>")
-def attendee_donate_page(show_slug: str, attendee_id: int):
-    return redirect(url_for("attendee_fee_page", show_slug=show_slug, attendee_id=attendee_id))
-
-
-@app.post("/attend/create-fee-checkout")
-@app.post("/attend/create-donation-checkout")
-@rate_limit("attendee_checkout", 20, 300)
-def create_attendee_fee_checkout():
-    show_slug = request.form.get("show_slug", "").strip()
-    attendee_id_raw = request.form.get("attendee_id", "").strip()
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return jsonify({"ok": False, "error": "Show not found."}), 404
-    try:
-        attendee_id = int(attendee_id_raw)
-    except ValueError:
-        return jsonify({"ok": False, "error": "Invalid attendee."}), 400
-    fixed_fee_cents = int(show["attendee_fee_cents"] or 0)
-    skip_fee = request.form.get("skip_fee", "").strip() == "1"
-    if skip_fee or fixed_fee_cents <= 0:
-        create_donation_row(int(show["id"]), attendee_id, 0, "skipped")
-        return jsonify({"ok": True, "skipped": True, "redirect_url": url_for("attendee_done", show_slug=show_slug)})
-    acct = _connected_account_id(show)
-    if not acct:
-        return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
-    _require_platform_stripe()
-    fee_row_id = create_donation_row(int(show["id"]), attendee_id, fixed_fee_cents, "pending")
-    success_url = _abs_url(url_for("attendee_fee_success", show_slug=show_slug)) + "?session_id={CHECKOUT_SESSION_ID}"
-    cancel_url = _abs_url(url_for("attendee_fee_page", show_slug=show_slug, attendee_id=attendee_id))
-    session_obj = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": fixed_fee_cents, "product_data": {"name": f"Attendance Fee – {show['title']}"}}, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"payment_item_type": "attendance_fee", "show_id": str(show["id"]), "show_slug": show_slug, "donation_id": str(fee_row_id)},
-        stripe_account=acct,
-    )
-    attach_stripe_session_to_donation(fee_row_id, session_obj.id, stripe_payment_intent_id="")
-    return jsonify({"ok": True, "checkout_url": session_obj.url})
-
-
-@app.get("/attend/<show_slug>/fee-success")
-@app.get("/donation-success")
-def attendee_fee_success(show_slug: Optional[str] = None):
-    session_id = request.args.get("session_id", "").strip()
-    if not session_id:
-        return "Missing session_id.", 400
-    if not show_slug:
-        show_slug = request.args.get("show_slug", "").strip()
-    show = get_show_by_slug(show_slug) if show_slug else get_active_show()
-    if not show:
-        return "Show not found.", 404
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("payment_not_complete.html")
-    _require_platform_stripe()
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
-    except Exception:
-        return render_template("payment_not_complete.html")
-    if sess.payment_status != "paid":
-        return render_template("payment_not_complete.html")
-    mark_donation_paid(sess.id)
-    return redirect(url_for("attendee_done", show_slug=show["slug"]))
-
-
-@app.get("/attend/<show_slug>/done")
-def attendee_done(show_slug: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    return render_template("attendee_done.html", show=show)
-
-
-@app.get("/v/<show_slug>/<car_token>/<category_slug>")
-def vote_qty_page(show_slug: str, car_token: str, category_slug: str):
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return "Show not found.", 404
-    if category_slug not in CATEGORY_SLUGS:
-        return "Invalid category.", 404
-    car = get_show_car_public_by_token(int(show["id"]), car_token)
-    if not car:
-        return "Car not found.", 404
-    if int(show["voting_open"]) != 1:
-        return render_template("voting_closed.html", show=show)
-    return render_template("vote_qty.html", show=show, car=car, category_slug=category_slug, category_name=CATEGORY_SLUGS[category_slug], vote_price_cents=int(show["vote_price_cents"] or 100))
-
-
-@app.post("/create-checkout-session")
-@rate_limit("vote_checkout", 25, 300)
-def create_checkout_session():
-    show_slug = request.form.get("show_slug", "").strip()
-    car_token = request.form.get("car_token", "").strip()
-    category_slug = request.form.get("category_slug", "").strip()
-    qty_raw = request.form.get("vote_qty", "1").strip()
-    show = get_show_by_slug(show_slug)
-    if not show:
-        return jsonify({"ok": False, "error": "Show not found."}), 404
-    if int(show["voting_open"]) != 1:
-        return jsonify({"ok": False, "error": "Voting is currently closed."}), 403
-    acct = _connected_account_id(show)
-    if not acct:
-        return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
-    if category_slug not in CATEGORY_SLUGS:
-        return jsonify({"ok": False, "error": "Invalid category."}), 400
-    car = get_show_car_public_by_token(int(show["id"]), car_token)
-    if not car:
-        return jsonify({"ok": False, "error": "Car not found."}), 404
-    try:
-        vote_qty = int(qty_raw)
-    except ValueError:
-        return jsonify({"ok": False, "error": "Invalid vote quantity."}), 400
-    if vote_qty < 1 or vote_qty > 50:
-        return jsonify({"ok": False, "error": "Vote quantity must be between 1 and 50."}), 400
-    vote_price_cents = int(show["vote_price_cents"] or 100)
-    amount_cents = vote_qty * vote_price_cents
-    _require_platform_stripe()
-    vote_intent_id = create_vote_intent(int(show["id"]), int(car["id"]), CATEGORY_SLUGS[category_slug], vote_qty, amount_cents)
-    success_url = _abs_url(url_for("vote_success")) + "?session_id={CHECKOUT_SESSION_ID}&show_slug=" + show_slug
-    cancel_url = _abs_url(url_for("vote_qty_page", show_slug=show_slug, car_token=car_token, category_slug=category_slug))
-    session_obj = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": vote_price_cents, "product_data": {"name": f"Vote – {CATEGORY_SLUGS[category_slug]} (Car #{car['car_number']})"}}, "quantity": vote_qty}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"payment_item_type": "vote", "show_id": str(show["id"]), "show_slug": show_slug, "vote_intent_id": str(vote_intent_id), "show_car_id": str(car["id"]), "category": CATEGORY_SLUGS[category_slug], "vote_qty": str(vote_qty)},
-        stripe_account=acct,
-    )
-    attach_stripe_session_to_vote_intent(vote_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return jsonify({"ok": True, "checkout_url": session_obj.url})
-
-
-@app.get("/success")
-def vote_success():
-    session_id = request.args.get("session_id", "").strip()
-    show_slug = request.args.get("show_slug", "").strip()
-    if not session_id:
-        return "Missing session_id.", 400
-    show = get_show_by_slug(show_slug) if show_slug else get_active_show()
-    if not show:
-        return "Show not found.", 404
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("payment_not_complete.html")
-    _require_platform_stripe()
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
-    except Exception:
-        return render_template("payment_not_complete.html")
-    if sess.payment_status != "paid":
-        return render_template("payment_not_complete.html")
-    finalize_vote_intent_paid(sess.id)
-    return render_template("vote_success.html")
-
-
-@app.get("/admin")
-def admin_page():
-    show = get_active_show()
-    next_url = request.args.get("next", "")
-    upcoming_event = _get_upcoming_event_for_display()
-
-    if not session.get("admin_authed"):
-        return render_template(
-            "admin.html",
-            show=show,
-            authed=False,
-            next=next_url,
-            upcoming_event=upcoming_event,
-        )
-
-    return render_template(
-        "admin.html",
-        show=show,
-        authed=True,
-        next=next_url,
-        upcoming_event=upcoming_event,
-    )
-
-
-@app.post("/admin/login")
-@rate_limit("admin_login", 10, 900)
-def admin_login():
-    pw = request.form.get("password", "")
-    next_url = request.form.get("next", "") or url_for("admin_page")
-    show = get_active_show()
-    if _check_admin_password(pw):
-        session["admin_authed"] = True
-        _log_event("admin.login_success", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
-        return redirect(next_url)
-    _log_event("admin.login_failed", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
-    return render_template("admin.html", show=show, authed=False, login_error="Incorrect password.", next=next_url, upcoming_event=_get_upcoming_event_for_display())
-
-
-@app.post("/admin/logout")
-@require_admin
-def admin_logout():
-    show = get_active_show()
-    session.pop("admin_authed", None)
-    _log_event("admin.logout", int(show["id"]) if show else None, actor_type="admin")
-    return redirect(url_for("admin_page"))
-
-
-@app.get("/admin/stripe/connect")
-@require_admin
-def admin_connect_charity_stripe():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    _require_platform_stripe()
-    return redirect(_build_connect_authorize_url(int(show["id"]), show["slug"]))
-
-
-@app.get("/admin/stripe/connect/callback")
-@require_admin
-def admin_connect_charity_stripe_callback():
-    _require_platform_stripe()
-    state = request.args.get("state", "").strip()
-    code = request.args.get("code", "").strip()
-    error = request.args.get("error", "").strip()
-    expected_state = session.get("stripe_connect_state")
-    show_id = session.get("stripe_connect_show_id")
-    if error:
-        flash(f"Stripe connection was not completed: {error}", "error")
-        _log_event("admin.stripe_connect_error", show_id, {"error": error}, actor_type="admin")
-        return redirect(url_for("admin_page"))
-    if not state or not expected_state or state != expected_state or not show_id:
-        flash("Invalid Stripe Connect state. Please try again.", "error")
-        return redirect(url_for("admin_page"))
-    if not code:
-        flash("Missing Stripe authorization code.", "error")
-        return redirect(url_for("admin_page"))
-    try:
-        token_resp = stripe.OAuth.token(grant_type="authorization_code", code=code)
-        stripe_account_id = token_resp.get("stripe_user_id", "")
-        connect_email = ""
-        if stripe_account_id:
-            acct = stripe.Account.retrieve(stripe_account_id)
-            connect_email = getattr(acct, "email", "") or ""
-        if not stripe_account_id:
-            flash("Stripe did not return a connected account ID.", "error")
-            return redirect(url_for("admin_page"))
-        set_show_charity_connect(int(show_id), stripe_account_id, connect_status="connected", connect_email=connect_email)
-        _log_event("admin.stripe_connected", int(show_id), {"stripe_account_id": stripe_account_id, "connect_email": connect_email}, actor_type="admin")
-        flash("Charity Stripe account connected successfully.", "ok")
-        return redirect(url_for("admin_page"))
-    except Exception as e:
-        flash(f"Unable to connect Stripe account: {e}", "error")
-        return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/stripe/disconnect")
-@require_admin
-def admin_disconnect_charity_stripe():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    clear_show_charity_connect(int(show["id"]))
-    _log_event("admin.stripe_disconnected", int(show["id"]), actor_type="admin")
-    flash("Charity Stripe connection removed from this show.", "ok")
-    return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/show-settings")
-@require_admin
-def admin_show_settings():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    show_type = (request.form.get("show_type") or "full").strip().lower()
-    ov_raw = request.form.get("allow_prereg_override", "").strip()
-    ov = None if ov_raw == "" else int(ov_raw) if ov_raw.isdigit() else None
-    max_cars_raw = request.form.get("max_cars", "").strip()
-    max_cars = None if max_cars_raw == "" else int(max_cars_raw) if max_cars_raw.isdigit() else None
-    registration_fee_cents = _parse_dollars_to_cents(request.form.get("registration_fee_dollars", ""), int(show["registration_fee_cents"] or 0))
-    attendee_fee_cents = _parse_dollars_to_cents(request.form.get("attendee_fee_dollars", ""), int(show["attendee_fee_cents"] or 0))
-    vote_price_cents = _parse_dollars_to_cents(request.form.get("vote_price_dollars", ""), int(show["vote_price_cents"] or 100))
-    if vote_price_cents <= 0:
-        vote_price_cents = 100
-    update_show_admin_settings(
-        int(show["id"]), show_type, ov, max_cars, registration_fee_cents, attendee_fee_cents, vote_price_cents,
-        request.form.get("public_vote_disclosure", ""), request.form.get("public_registration_disclosure", ""),
-        request.form.get("public_donation_disclosure", ""), request.form.get("waiver_text", ""), request.form.get("waiver_version", ""),
-    )
-    _log_event("admin.show_settings_saved", int(show["id"]), {"show_type": show_type, "max_cars": max_cars}, actor_type="admin")
-    flash("Show settings saved.", "ok")
-    return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/upcoming-event")
-@require_admin
-def admin_upcoming_event():
-    heading = request.form.get("upcoming_heading", "").strip() or DEFAULT_UPCOMING_EVENT["heading"]
-    title = request.form.get("upcoming_title", "").strip() or DEFAULT_UPCOMING_EVENT["title"]
-    display_date = request.form.get("upcoming_date", "").strip() or DEFAULT_UPCOMING_EVENT["display_date"]
-    intro = request.form.get("upcoming_intro", "").strip() or DEFAULT_UPCOMING_EVENT["intro"]
-    details = request.form.get("upcoming_details", "").strip() or DEFAULT_UPCOMING_EVENT["details"]
-    qr_message = request.form.get("upcoming_qr_message", "").strip() or DEFAULT_UPCOMING_EVENT["qr_message"]
-    visible = 1 if request.form.get("upcoming_visible", "1").strip() == "1" else 0
-
-    save_upcoming_event(
-        heading=heading,
-        title=title,
-        display_date=display_date,
-        visible=visible,
-        intro=intro,
-        details=details,
-        qr_message=qr_message,
-    )
-
-    show = get_active_show()
-    _log_event(
-        "admin.upcoming_event_saved",
-        int(show["id"]) if show else None,
-        {
-            "heading": heading,
-            "title": title,
-            "display_date": display_date,
-            "visible": visible,
-        },
-        actor_type="admin",
-    )
-    flash("Upcoming event page updated.", "ok")
-    return redirect(url_for("admin_page"))
-
-
-@app.get("/admin/print-cards.pdf")
-@require_admin
-def admin_print_cards_pdf():
-    from utils.print_cards import build_landscape_cards_pdf
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-
-    ids_raw = request.args.get("ids", "").strip()
-    all_raw = request.args.get("all", "").strip()
-    include_back = request.args.get("back", "").strip() == "1"
-
-    cars = list_show_cars_public(int(show["id"]))
-    if not cars:
-        return "No cars to print.", 400
-
-    selected = cars
-    if all_raw != "1":
-        want_ids = set()
-        if ids_raw:
-            for part in ids_raw.split(","):
-                part = part.strip()
-                if part.isdigit():
-                    want_ids.add(int(part))
-
-        if not want_ids:
-            return "No cars selected.", 400
-
-        selected = [r for r in cars if int(r["id"]) in want_ids]
-
-    title_sponsor, sponsors = get_show_sponsors(int(show["id"])) or (None, [])
-
-    pdf_bytes = build_landscape_cards_pdf(
-        show=dict(show),
-        cars_rows=[dict(r) for r in selected],
-        base_url=_abs_url(""),
-        static_root=os.path.join(app.root_path, "static"),
-        title_sponsor=title_sponsor,
-        sponsors=sponsors,
-        include_back=include_back,
-        mirror_back_pages=False,
-    )
-
-    _log_event(
-        "admin.print_cards_exported",
-        int(show["id"]),
-        {"count": len(selected), "include_back": include_back},
-        actor_type="admin",
-    )
-
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=f"{show['slug']}-voting-cards-landscape.pdf",
-    )
-
-
-@app.get("/admin/export-snapshot.zip")
-@require_admin
-def admin_export_snapshot_zip():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    zip_bytes, filename = build_snapshot_zip_bytes(int(show["id"]))
-    _log_event("admin.snapshot_exported", int(show["id"]), {"filename": filename}, actor_type="admin")
-    return send_file(io.BytesIO(zip_bytes), mimetype="application/zip", as_attachment=True, download_name=filename)
-
-
-@app.post("/admin/close-voting-and-export")
-@require_admin
-def admin_close_voting_and_export():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    set_show_voting_open(int(show["id"]), False)
-    zip_bytes, filename = build_snapshot_zip_bytes(int(show["id"]))
-    _log_event("admin.voting_closed_and_exported", int(show["id"]), {"filename": filename}, actor_type="admin")
-    return send_file(io.BytesIO(zip_bytes), mimetype="application/zip", as_attachment=True, download_name=filename)
-
-
-@app.post("/admin/toggle-voting")
-@require_admin
-def admin_toggle_voting():
-    show = get_active_show()
-    if show:
-        toggle_show_voting(int(show["id"]))
-        _log_event("admin.voting_toggled", int(show["id"]), actor_type="admin")
-    return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/open-voting")
-@require_admin
-def admin_open_voting():
-    show = get_active_show()
-    if show:
-        set_show_voting_open(int(show["id"]), True)
-        _log_event("admin.voting_opened", int(show["id"]), actor_type="admin")
-    return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/close-voting")
-@require_admin
-def admin_close_voting():
-    show = get_active_show()
-    if show:
-        set_show_voting_open(int(show["id"]), False)
-        _log_event("admin.voting_closed", int(show["id"]), actor_type="admin")
-    return redirect(url_for("admin_page"))
-
-
-@app.post("/admin/reset-votes")
-@require_admin
-def admin_reset_votes():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    zip_bytes, filename = build_snapshot_zip_bytes(int(show["id"]))
-    reset_votes_for_show(int(show["id"]))
-    _log_event("admin.votes_reset", int(show["id"]), {"backup_filename": filename}, actor_type="admin")
-    return send_file(io.BytesIO(zip_bytes), mimetype="application/zip", as_attachment=True, download_name=filename)
-
-
-@app.get("/admin/leaderboard")
-@require_admin
-def admin_leaderboard():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    return render_template("leaderboard.html", show=show, by_category=leaderboard_by_category(int(show["id"])), overall=leaderboard_overall(int(show["id"])))
-
-
-@app.get("/admin/export-votes.csv")
-@require_admin
-def admin_export_votes():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    rows = export_votes_for_show(int(show["id"]))
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["created_at", "category", "vote_qty", "amount_cents", "stripe_session_id", "car_number", "year", "make", "model", "owner_name", "owner_phone", "owner_email", "opt_in_future"])
-    for r in rows:
-        w.writerow([r["created_at"], r["category"], r["vote_qty"], r["amount_cents"], r["stripe_session_id"], r["car_number"], r["year"], r["make"], r["model"], r["owner_name"], r["owner_phone"], r["owner_email"], r["opt_in_future"]])
-    _log_event("admin.votes_exported", int(show["id"]), {"row_count": len(rows)}, actor_type="admin")
-    mem = io.BytesIO(buf.getvalue().encode("utf-8"))
     mem.seek(0)
-    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="votes_export.csv")
-
-
-@app.get("/admin/placeholders")
-@require_admin
-def admin_placeholders():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    return render_template("admin_placeholders.html", show=show, cars=list_show_cars_public(int(show["id"])))
-
-
-@app.post("/admin/placeholders/create")
-@require_admin
-def admin_placeholders_create():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    start_raw = request.form.get("start_number", "1").strip()
-    count_raw = request.form.get("count", "50").strip()
-    try:
-        start_number = int(start_raw)
-        count = int(count_raw)
-        if start_number < 1 or count < 1 or count > 1000:
-            raise ValueError()
-    except ValueError:
-        flash("Invalid placeholder range. Count must be 1–1000.", "error")
-        return redirect(url_for("admin_placeholders"))
-    created = create_placeholder_cars(int(show["id"]), start_number=start_number, count=count)
-    _log_event("admin.placeholders_created", int(show["id"]), {"start_number": start_number, "count_requested": count, "count_created": created}, actor_type="admin")
-    flash(f"Created {created} placeholder cars.", "ok")
-    return redirect(url_for("admin_placeholders"))
-
-
-@app.post("/admin/waiver-received")
-@require_admin
-def admin_waiver_received():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    show_car_id_raw = request.form.get("show_car_id", "").strip()
-    if not show_car_id_raw.isdigit():
-        return redirect(url_for("admin_placeholders"))
-    show_car_id = int(show_car_id_raw)
-    waiver_mark_received(int(show["id"]), show_car_id, received_by="admin")
-    _log_event("admin.waiver_marked_received", int(show["id"]), {"show_car_id": show_car_id}, actor_type="admin")
-    flash("Waiver marked as received.", "ok")
-    return redirect(url_for("admin_placeholders"))
-
-
-@app.get("/admin/sponsors")
-@require_admin
-def admin_sponsors():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    title_sponsor, sponsors = get_show_sponsors(int(show["id"])) or (None, [])
-    return render_template("admin_sponsors.html", show=show, title_sponsor=title_sponsor, sponsors=sponsors)
-
-
-@app.post("/admin/sponsors/add")
-@require_admin
-def admin_sponsors_add():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-
-    name = request.form.get("name", "").strip()
-    logo_path = request.form.get("logo_path", "").strip()
-    website_url = request.form.get("website_url", "").strip()
-    placement = request.form.get("placement", "standard").strip().lower()
-    sort_order_raw = request.form.get("sort_order", "100").strip()
-
-    if not name:
-        flash("Sponsor name is required.", "error")
-        return redirect(url_for("admin_sponsors"))
-
-    try:
-        sort_order = int(sort_order_raw)
-    except ValueError:
-        sort_order = 100
-
-    allowed_placements = {"presenting", "title", "gold", "silver", "standard"}
-    if placement not in allowed_placements:
-        placement = "standard"
-
-    sponsor_id = upsert_sponsor(name=name, logo_path=logo_path, website_url=website_url)
-
-    attach_sponsor_to_show(
-        int(show["id"]),
-        sponsor_id,
-        placement=placement,
-        sort_order=sort_order,
-    )
-
-    flash("Sponsor saved.", "ok")
-    return redirect(url_for("admin_sponsors"))
-
-
-@app.post("/admin/sponsors/remove")
-@require_admin
-def admin_sponsors_remove():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-    sponsor_id_raw = request.form.get("sponsor_id", "").strip()
-    if not sponsor_id_raw.isdigit():
-        return redirect(url_for("admin_sponsors"))
-    sponsor_id = int(sponsor_id_raw)
-    remove_sponsor_from_show(int(show["id"]), sponsor_id)
-    _log_event("admin.sponsor_removed", int(show["id"]), {"sponsor_id": sponsor_id}, actor_type="admin")
-    flash("Sponsor removed from show.", "ok")
-    return redirect(url_for("admin_sponsors"))
-
-
-@app.get("/admin/debug/routes")
-@require_admin
-def admin_debug_routes():
-    routes = []
-    for rule in app.url_map.iter_rules():
-        methods = sorted(m for m in rule.methods if m not in ("HEAD", "OPTIONS"))
-        routes.append({"rule": str(rule), "endpoint": rule.endpoint, "methods": methods})
-    routes.sort(key=lambda r: r["rule"])
-    return {"count": len(routes), "routes": routes}
-
-
-@app.post("/stripe/webhook")
-def stripe_webhook():
-    _require_platform_stripe()
-    payload = request.get_data(as_text=False)
-    sig_header = request.headers.get("Stripe-Signature", "")
-    if not STRIPE_WEBHOOK_SECRET:
-        return "Webhook secret not configured.", 500
-    try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except ValueError:
-        return "Invalid payload.", 400
-    except stripe.error.SignatureVerificationError:
-        return "Invalid signature.", 400
-
-    event_id = event.get("id", "")
-    event_type = event.get("type", "")
-    if event_id and has_processed_webhook_event(event_id):
-        return jsonify({"ok": True, "duplicate": True})
-    try:
-        if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
-            obj = event["data"]["object"]
-            session_id = obj.get("id", "")
-            payment_status = obj.get("payment_status", "")
-            metadata = obj.get("metadata", {}) or {}
-            item_type = metadata.get("payment_item_type", "")
-            if session_id and payment_status == "paid":
-                if item_type == "registration":
-                    finalize_registration_intent_paid(session_id)
-                elif item_type == "placeholder_claim":
-                    show_car_id = int(metadata.get("show_car_id", "0") or "0")
-                    if show_car_id:
-                        _finalize_placeholder_claim_paid(stripe_session_id=session_id, show_car_id=show_car_id)
-                elif item_type == "vote":
-                    finalize_vote_intent_paid(session_id)
-                elif item_type == "attendance_fee":
-                    mark_donation_paid(session_id)
-        if event_id:
-            mark_webhook_event_processed(event_id, event_type)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return f"Webhook processing error: {e}", 500
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port)
+    return mem.getvalue(), zip_name
