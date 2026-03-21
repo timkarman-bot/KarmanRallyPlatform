@@ -106,12 +106,7 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE shows ADD COLUMN hide_address INTEGER NOT NULL DEFAULT 0",
     ]:
-        try:
-            cur.execute(sql)
-        except sqlite3.OperationalError:
-            pass
-
-    cur.execute(
+            cur.execute(
         """
         CREATE TABLE IF NOT EXISTS people (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1832,7 +1827,7 @@ def save_upcoming_event(
     conn.commit()
     conn.close()
     
-    def list_event_interest_signups(show_id: Optional[int] = None) -> List[sqlite3.Row]:
+def list_event_interest_signups(show_id: Optional[int] = None) -> List[sqlite3.Row]:
     conn = _conn()
     if show_id is None:
         rows = conn.execute(
@@ -1916,6 +1911,7 @@ def create_event_interest_signup(
 
     conn = _conn()
     cur = conn.cursor()
+
     cur.execute(
         """
         INSERT INTO event_interest_signups (
@@ -1935,13 +1931,15 @@ def create_event_interest_signup(
             (source or "").strip(),
         ),
     )
+
     conn.commit()
     rid = int(cur.lastrowid)
     conn.close()
     return rid
-
+    
+#=======================================    
 # SNAPSHOT EXPORT
-
+#=======================================
 def export_people_rows_for_show(show_id: int) -> List[sqlite3.Row]:
     conn = _conn()
     rows = conn.execute(
