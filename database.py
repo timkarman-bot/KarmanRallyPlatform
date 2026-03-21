@@ -452,19 +452,15 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_event_interest_created_at ON event_interest_signups(created_at)",
     ]:
         cur.execute(sql)
-        
-# ===============================
-# PATCH: ensure show_id exists on event_interest_signups
-# ===============================
-try:
-    cur.execute("ALTER TABLE event_interest_signups ADD COLUMN show_id INTEGER")
-except Exception:
-    pass
 
+    # PATCH: ensure show_id exists on older DBs
+    try:
+        cur.execute("ALTER TABLE event_interest_signups ADD COLUMN show_id INTEGER")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
-
 
 # SHOWS
 
