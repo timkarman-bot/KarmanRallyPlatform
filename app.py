@@ -79,6 +79,9 @@ from database import (
     create_waiver_evidence_record,
     log_audit_event,
     rate_limit_increment,
+    get_upcoming_event,
+    save_upcoming_event,
+    create_event_interest_signup,
 )
 
 
@@ -144,20 +147,15 @@ DEFAULT_SHOW = {
     ),
 }
 
-UPCOMING_EVENTS = [
-    {
-        "date": "May 23, 2026",
-        "title": "Pop-Up Car Show (Certificates + People’s Choice)",
-        "location": "Kansas City Metro (TBD)",
-        "status": "Planning",
-    },
-    {
-        "date": "June 20, 2026",
-        "title": "Summer Cruise + Mini Show",
-        "location": "Liberty, MO (TBD)",
-        "status": "Planning",
-    },
-]
+DEFAULT_UPCOMING_EVENT = {
+    "heading": "Upcoming show",
+    "title": "Show or Pop-Up Event",
+    "display_date": "April 25 or 26, 2026",
+    "visible": 1,
+    "intro": "Check the newsletter QR code for the latest details on our next show or pop-up event.",
+    "details": "Location TBA by April 1, 2026 • Date either April 25 or 26, 2026, TBA by April 1, 2026",
+    "qr_message": "Use the QR code in the newsletter to get updated information as plans are finalized.",
+}
 
 init_db()
 ensure_default_show(DEFAULT_SHOW)
@@ -172,6 +170,13 @@ ATTENDEE_CONSENT_TEXT = (
     "if selected, share sponsor offers. Msg/data rates may apply. Opt out anytime."
 )
 ATTENDEE_CONSENT_VERSION = "2026-03-11"
+
+
+def _get_upcoming_event_for_display() -> Dict[str, Any]:
+    upcoming_event = get_upcoming_event()
+    if not upcoming_event:
+        return DEFAULT_UPCOMING_EVENT.copy()
+    return dict(upcoming_event)
 
 
 def prereg_allowed(show) -> bool:
@@ -594,7 +599,67 @@ def voting_instructions(show_slug: str):
 
 @app.get("/events")
 def events():
-    return render_template("events.html", show=get_active_show(), events=UPCOMING_EVENTS)
+    return render_template(
+        "events.html",
+        show=get_active_show(),
+        upcoming_event=_get_upcoming_event_for_display(),
+        hide_nav=True,
+    )
+
+
+@app.post("/event-updates-signup")
+@rate_limit("event_updates_signup", 20, 300)
+def event_updates_signup():
+    first_name = request.form.get("first_name", "").strip()
+    last_name = request.form.get("last_name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    phone = request.form.get("phone", "").strip()
+    wants_email = 1 if request.form.get("wants_email") else 0
+    wants_text = 1 if request.form.get("wants_text") else 0
+    source = request.form.get("source", "").strip() or "website"
+
+    if not first_name:
+        flash("First name is required.", "error")
+        return redirect(url_for("events"))
+
+    if not email and not phone:
+        flash("Please provide an email address, a mobile phone number, or both.", "error")
+        return redirect(url_for("events"))
+
+    if wants_email and not email:
+        flash("Email is required if you want email updates.", "error")
+        return redirect(url_for("events"))
+
+    if wants_text and not phone:
+        flash("Mobile phone is required if you want text updates.", "error")
+        return redirect(url_for("events"))
+
+    create_event_interest_signup(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        wants_email=wants_email,
+        wants_text=wants_text,
+        source=source,
+    )
+
+    # FUTURE DRIP / AUTO-MESSAGING PLACEHOLDER
+    # ----------------------------------------
+    # if wants_email and email:
+    #     send_upcoming_event_email(
+    #         to_email=email,
+    #         first_name=first_name,
+    #     )
+    #
+    # if wants_text and phone:
+    #     send_upcoming_event_text(
+    #         to_phone=phone,
+    #         first_name=first_name,
+    #     )
+
+    flash("You're on the list. Updates and reminders coming soon.", "ok")
+    return redirect(url_for("events"))
 
 
 @app.get("/show/<slug>")
@@ -1184,9 +1249,24 @@ def vote_success():
 def admin_page():
     show = get_active_show()
     next_url = request.args.get("next", "")
+    upcoming_event = _get_upcoming_event_for_display()
+
     if not session.get("admin_authed"):
-        return render_template("admin.html", show=show, authed=False, next=next_url)
-    return render_template("admin.html", show=show, authed=True, next=next_url)
+        return render_template(
+            "admin.html",
+            show=show,
+            authed=False,
+            next=next_url,
+            upcoming_event=upcoming_event,
+        )
+
+    return render_template(
+        "admin.html",
+        show=show,
+        authed=True,
+        next=next_url,
+        upcoming_event=upcoming_event,
+    )
 
 
 @app.post("/admin/login")
@@ -1200,7 +1280,7 @@ def admin_login():
         _log_event("admin.login_success", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
         return redirect(next_url)
     _log_event("admin.login_failed", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
-    return render_template("admin.html", show=show, authed=False, login_error="Incorrect password.", next=next_url)
+    return render_template("admin.html", show=show, authed=False, login_error="Incorrect password.", next=next_url, upcoming_event=_get_upcoming_event_for_display())
 
 
 @app.post("/admin/logout")
@@ -1298,6 +1378,43 @@ def admin_show_settings():
     return redirect(url_for("admin_page"))
 
 
+@app.post("/admin/upcoming-event")
+@require_admin
+def admin_upcoming_event():
+    heading = request.form.get("upcoming_heading", "").strip() or DEFAULT_UPCOMING_EVENT["heading"]
+    title = request.form.get("upcoming_title", "").strip() or DEFAULT_UPCOMING_EVENT["title"]
+    display_date = request.form.get("upcoming_date", "").strip() or DEFAULT_UPCOMING_EVENT["display_date"]
+    intro = request.form.get("upcoming_intro", "").strip() or DEFAULT_UPCOMING_EVENT["intro"]
+    details = request.form.get("upcoming_details", "").strip() or DEFAULT_UPCOMING_EVENT["details"]
+    qr_message = request.form.get("upcoming_qr_message", "").strip() or DEFAULT_UPCOMING_EVENT["qr_message"]
+    visible = 1 if request.form.get("upcoming_visible", "1").strip() == "1" else 0
+
+    save_upcoming_event(
+        heading=heading,
+        title=title,
+        display_date=display_date,
+        visible=visible,
+        intro=intro,
+        details=details,
+        qr_message=qr_message,
+    )
+
+    show = get_active_show()
+    _log_event(
+        "admin.upcoming_event_saved",
+        int(show["id"]) if show else None,
+        {
+            "heading": heading,
+            "title": title,
+            "display_date": display_date,
+            "visible": visible,
+        },
+        actor_type="admin",
+    )
+    flash("Upcoming event page updated.", "ok")
+    return redirect(url_for("admin_page"))
+
+
 @app.get("/admin/print-cards.pdf")
 @require_admin
 def admin_print_cards_pdf():
@@ -1354,6 +1471,8 @@ def admin_print_cards_pdf():
         as_attachment=True,
         download_name=f"{show['slug']}-voting-cards-landscape.pdf",
     )
+
+
 @app.get("/admin/export-snapshot.zip")
 @require_admin
 def admin_export_snapshot_zip():
@@ -1540,6 +1659,7 @@ def admin_sponsors_add():
 
     flash("Sponsor saved.", "ok")
     return redirect(url_for("admin_sponsors"))
+
 
 @app.post("/admin/sponsors/remove")
 @require_admin

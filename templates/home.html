@@ -24,12 +24,14 @@
       <a href="{{ url_for('show_page', slug=show['slug']) }}" class="btn btn-primary">
         View show details
       </a>
-      <a href="{{ url_for('register_page') }}" class="btn btn-outline">
-        Register your car
-      </a>
       <a href="{{ url_for('events') }}" class="btn btn-outline">
-        Upcoming events
+        Next show details
       </a>
+    </div>
+
+    <!-- NEW helper message -->
+    <div class="mt-4 text-xs text-slate-500">
+      Looking for our next show? Scan the newsletter QR code or click above for the latest updates.
     </div>
 
     <div class="mt-6 text-xs text-slate-500">
