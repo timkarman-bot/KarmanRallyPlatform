@@ -1,35 +1,49 @@
-@app.get("/admin/leads")
-@require_admin
-def admin_leads():
-    show_id_raw = request.args.get("show_id", "").strip()
-    selected_show_id = None
-    if show_id_raw.isdigit():
-        selected_show_id = int(show_id_raw)
+{% extends "base.html" %}
+{% block content %}
 
-    leads = list_event_interest_signups(selected_show_id)
-    shows = list_shows_admin()
+<div class="max-w-5xl mx-auto p-6">
+  <h1 class="text-2xl font-bold mb-4">Manage Shows</h1>
 
-    return render_template(
-        "admin_leads.html",
-        show=get_active_show(),
-        shows=shows,
-        leads=leads,
-        selected_show_id=selected_show_id,
-    )
+  <!-- CREATE -->
+  <form method="POST" action="{{ url_for('admin_shows_create') }}" class="mb-8 space-y-3">
+    <input name="title" placeholder="Title" class="w-full border p-2 rounded" required>
+    <input name="slug" placeholder="Slug" class="w-full border p-2 rounded" required>
+    <input name="date" placeholder="Date" class="w-full border p-2 rounded">
+    <input name="time" placeholder="Time" class="w-full border p-2 rounded">
+    <input name="location_name" placeholder="Location" class="w-full border p-2 rounded">
+    <input name="address" placeholder="Address" class="w-full border p-2 rounded">
+    <button class="bg-blue-600 text-white px-4 py-2 rounded">Create Show</button>
+  </form>
 
+  <!-- LIST -->
+  {% for s in shows %}
+  <div class="border p-4 mb-4 rounded">
+    <form method="POST" action="{{ url_for('admin_shows_update', show_id=s.id) }}" class="space-y-2">
+      <input name="title" value="{{ s.title }}" class="w-full border p-2 rounded">
+      <input name="slug" value="{{ s.slug }}" class="w-full border p-2 rounded">
+      <input name="date" value="{{ s.date }}" class="w-full border p-2 rounded">
+      <input name="location_name" value="{{ s.location_name }}" class="w-full border p-2 rounded">
 
-@app.get("/admin/leads/export.csv")
-@require_admin
-def admin_leads_export():
-    show_id_raw = request.args.get("show_id", "").strip()
-    selected_show_id = int(show_id_raw) if show_id_raw.isdigit() else None
-    csv_bytes = export_event_interest_signups_csv(selected_show_id)
+      <label class="flex gap-2">
+        <input type="checkbox" name="hide_address" {% if s.hide_address %}checked{% endif %}>
+        Hide Address
+      </label>
 
-    filename = "event-leads.csv" if selected_show_id is None else f"event-leads-show-{selected_show_id}.csv"
-    return send_file(
-        io.BytesIO(csv_bytes),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name=filename,
-    )
-   
+      <button class="bg-green-600 text-white px-3 py-1 rounded">Save</button>
+    </form>
+
+    <div class="mt-3 flex gap-2">
+      <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s.id) }}">
+        <button class="border px-3 py-1 rounded">Active</button>
+      </form>
+
+      <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s.id) }}">
+        <button class="border px-3 py-1 rounded">Upcoming</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+
+</div>
+
+{% endblock %}
