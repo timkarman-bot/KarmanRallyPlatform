@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% set title = "Admin • Shows" %}
+
+{% block content %}
+<div class="max-w-6xl">
+
+  <h1 class="text-3xl font-semibold tracking-tight">Manage Shows</h1>
+
+  <div class="mt-6 rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <h2 class="text-xl font-semibold">Create New Show</h2>
+
+    <form method="POST" action="{{ url_for('admin_shows_create') }}" class="mt-4 grid gap-4">
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <input name="title" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Title" required>
+        <input name="slug" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Slug (example: spring-show-2026)" required>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <input name="date" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Date">
+        <input name="time" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Time">
+      </div>
+
+      <input name="location_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Location Name">
+      <input name="address" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Address">
+
+      <input name="benefiting" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Benefiting (Charity)">
+      <input name="suggested_donation" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Suggested Donation">
+
+      <textarea name="description" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Description"></textarea>
+      <textarea name="short_details" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Short Details"></textarea>
+
+      <input name="qr_message" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="QR Message">
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <input name="cta_label" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="CTA Label (optional)">
+        <input name="cta_url" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="CTA URL (optional)">
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <option value="draft">Draft</option>
+          <option value="upcoming">Upcoming</option>
+          <option value="past">Past</option>
+        </select>
+
+        <input name="sort_order" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Sort Order (100 default)">
+
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="show_on_site" checked>
+          Show on site
+        </label>
+      </div>
+
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="hide_address">
+        Hide address on public pages
+      </label>
+
+      <button class="btn btn-primary" type="submit">Create Show</button>
+    </form>
+  </div>
+
+  <div class="mt-8 grid gap-6">
+    {% for s in shows %}
+    <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+
+      <div class="flex justify-between items-center">
+        <div>
+          <div class="text-lg font-semibold">{{ s.title }}</div>
+          <div class="text-sm text-slate-500">Slug: {{ s.slug }}</div>
+        </div>
+
+        <div class="text-xs px-3 py-1 rounded-full bg-slate-100">
+          {{ s.status }}
+        </div>
+      </div>
+
+      <form method="POST" action="{{ url_for('admin_shows_update', show_id=s.id) }}" class="mt-4 grid gap-4">
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <input name="title" value="{{ s.title or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <input name="slug" value="{{ s.slug or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <input name="date" value="{{ s.date or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <input name="time" value="{{ s.time or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+        </div>
+
+        <input name="location_name" value="{{ s.location_name or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+        <input name="address" value="{{ s.address or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+
+        <input name="benefiting" value="{{ s.benefiting or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+        <input name="suggested_donation" value="{{ s.suggested_donation or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+
+        <textarea name="description" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s.description or '' }}</textarea>
+        <textarea name="short_details" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s.short_details or '' }}</textarea>
+
+        <input name="qr_message" value="{{ s.qr_message or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <input name="cta_label" value="{{ s.cta_label or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <input name="cta_url" value="{{ s.cta_url or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4">
+          <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+            <option value="draft" {% if s.status == "draft" %}selected{% endif %}>Draft</option>
+            <option value="upcoming" {% if s.status == "upcoming" %}selected{% endif %}>Upcoming</option>
+            <option value="past" {% if s.status == "past" %}selected{% endif %}>Past</option>
+          </select>
+
+          <input name="sort_order" value="{{ s.sort_order or 100 }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="show_on_site" {% if s.show_on_site %}checked{% endif %}>
+            Show on site
+          </label>
+        </div>
+
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="hide_address" {% if s.hide_address %}checked{% endif %}>
+          Hide address on public pages
+        </label>
+
+        <button class="btn btn-primary" type="submit">Save Changes</button>
+      </form>
+
+      <div class="mt-4 flex flex-wrap gap-3">
+        <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s.id) }}">
+          <button class="btn btn-outline" type="submit">Set Active</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s.id) }}">
+          <button class="btn btn-outline" type="submit">Set Upcoming</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('admin_shows_set_past', show_id=s.id) }}">
+          <button class="btn btn-outline" type="submit">Set Past</button>
+        </form>
+      </div>
+
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
