@@ -57,6 +57,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS shows (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             slug TEXT NOT NULL UNIQUE,
+            flyer_image_path TEXT,
             title TEXT NOT NULL,
             date TEXT,
             time TEXT,
@@ -113,6 +114,7 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN map_url TEXT",
         "ALTER TABLE shows ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE shows ADD COLUMN hide_address INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN flyer_image_path TEXT",
     ]:
         try:
             cur.execute(sql)
@@ -572,6 +574,7 @@ def get_next_upcoming_show() -> Optional[sqlite3.Row]:
 def create_show_admin(
     *,
     slug: str,
+    flyer_image_path: str,
     title: str,
     date: str,
     time: str,
@@ -594,15 +597,16 @@ def create_show_admin(
     cur.execute(
         """
         INSERT INTO shows (
-            slug, title, date, time, location_name, address, benefiting,
+            slug, flyer_image_path, title, date, time, location_name, address, benefiting,
             suggested_donation, description, status, short_details, qr_message,
             cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
         """,
         (
             slug.strip(),
             title.strip(),
+            (flyer_image_path or "").strip(),
             (date or "").strip(),
             (time or "").strip(),
             (location_name or "").strip(),
@@ -630,6 +634,7 @@ def update_show_admin_record(
     *,
     slug: str,
     title: str,
+    flyer_image_path: str,
     date: str,
     time: str,
     location_name: str,
@@ -801,6 +806,7 @@ def update_show_admin_settings(
         """
         UPDATE shows
         SET show_type = ?,
+            flyer_image_path = ?,
             allow_prereg_override = ?,
             max_cars = ?,
             registration_fee_cents = ?,
@@ -820,6 +826,7 @@ def update_show_admin_settings(
             registration_fee_cents,
             attendee_fee_cents,
             vote_price_cents,
+            (flyer_image_path or "").strip(),
             (public_vote_disclosure or "").strip(),
             (public_registration_disclosure or "").strip(),
             (public_donation_disclosure or "").strip(),

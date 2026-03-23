@@ -1415,6 +1415,7 @@ def admin_shows_create():
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
+        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
         sort_order=int(request.form.get("sort_order", "100") or "100"),
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
@@ -1422,7 +1423,6 @@ def admin_shows_create():
 
     flash("Show created.", "ok")
     return redirect(url_for("admin_shows"))
-
 
 @app.post("/admin/shows/<int:show_id>/update")
 @require_admin
@@ -1443,14 +1443,14 @@ def admin_shows_update(show_id: int):
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
+        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
         sort_order=int(request.form.get("sort_order", "100") or "100"),
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
     )
 
     flash("Show updated.", "ok")
-    return redirect(url_for("admin_shows"))
-    
+    return redirect(url_for("admin_shows"))    
 @app.post("/admin/shows/<int:show_id>/set-active")
 @require_admin
 def admin_shows_set_active(show_id: int):
@@ -1458,12 +1458,6 @@ def admin_shows_set_active(show_id: int):
     flash("Show set as active.", "ok")
     return redirect(url_for("admin_shows"))
 
-@app.post("/admin/shows/<int:show_id>/duplicate")
-@require_admin
-def admin_shows_duplicate(show_id: int):
-    duplicate_show_admin(show_id)
-    flash("Show duplicated.", "ok")
-    return redirect(url_for("admin_shows"))
 
 @app.post("/admin/shows/<int:show_id>/set-upcoming")
 @require_admin
