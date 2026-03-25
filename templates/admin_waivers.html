@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mx-auto max-w-5xl px-4 py-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl font-semibold text-slate-900">Waiver Templates</h1>
+      <p class="mt-1 text-sm text-slate-600">Manage the master waiver language used by the platform.</p>
+    </div>
+    <a href="{{ url_for('admin_waiver_new') }}" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
+      New Waiver
+    </a>
+  </div>
+
+  <div class="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Title</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Version</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Preset</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Default</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Updated</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-200">
+        {% for wt in templates %}
+        <tr>
+          <td class="px-4 py-3 text-sm text-slate-900">{{ wt["title"] }}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">{{ wt["version"] }}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">{{ preset_labels.get(wt["preset_key"] or "standard", "Standard Car Show") }}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">{% if wt["is_default"] %}Yes{% else %}No{% endif %}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">{{ wt["updated_at"] or wt["created_at"] }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="{{ url_for('admin_waiver_edit', waiver_template_id=wt['id']) }}" class="text-sm font-medium text-slate-900 underline">
+              Edit
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

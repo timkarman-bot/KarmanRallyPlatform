@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mx-auto max-w-6xl px-4 py-8">
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-semibold text-slate-900">{% if waiver and waiver["id"] %}Edit Waiver{% else %}New Waiver{% endif %}</h1>
+      <p class="mt-1 text-sm text-slate-600">Use the builder below so required legal sections are not missed. The advanced editor is still available when you need custom wording.</p>
+    </div>
+    <a href="{{ url_for('admin_waivers') }}" class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Back</a>
+  </div>
+
+  <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
+    <div class="space-y-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 class="text-lg font-semibold text-slate-900">Basic Information</h2>
+        <div class="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-sm font-medium text-slate-700">Title</label>
+            <input type="text" name="title" value="{{ waiver['title'] if waiver else '' }}" class="w-full rounded-xl border border-slate-300 px-3 py-2" required>
+          </div>
+          <div>
+            <label class="mb-1 block text-sm font-medium text-slate-700">Version</label>
+            <input type="text" name="version" value="{{ waiver['version'] if waiver else '' }}" class="w-full rounded-xl border border-slate-300 px-3 py-2" required>
+          </div>
+        </div>
+        <div class="mt-4 flex items-center gap-2">
+          <input type="checkbox" id="is_default" name="is_default" {% if waiver and waiver['is_default'] %}checked{% endif %}>
+          <label for="is_default" class="text-sm text-slate-700">Set as default waiver</label>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 class="text-lg font-semibold text-slate-900">Waiver Builder</h2>
+        <p class="mt-1 text-sm text-slate-600">Choose a preset, then turn sections on or off. Organizer and venue information still come from each show.</p>
+
+        <div class="mt-4">
+          <label class="mb-1 block text-sm font-medium text-slate-700">Preset</label>
+          <select name="preset_key" class="w-full rounded-xl border border-slate-300 px-3 py-2">
+            {% for key, label in preset_labels.items() %}
+              <option value="{{ key }}" {% if waiver['builder_config']['preset_key'] == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mt-5 grid gap-3 md:grid-cols-2">
+          {% set cfg = waiver['builder_config'] %}
+          {% set checks = [
+            ('include_assumption_of_risk', 'Assumption of risk'),
+            ('include_release_of_liability', 'Release of liability'),
+            ('include_indemnification', 'Indemnification'),
+            ('include_vehicle_responsibility', 'Vehicle responsibility'),
+            ('include_rules_compliance', 'Rules and compliance'),
+            ('include_no_custody', 'No custody / bailment'),
+            ('include_media_release', 'Photo and media release'),
+            ('include_charity_clause', 'Charity language'),
+            ('include_venue_clause', 'Venue language'),
+            ('include_right_to_remove', 'Right to remove')
+          ] %}
+          {% for name, label in checks %}
+          <label class="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <input type="checkbox" name="{{ name }}" class="mt-1" {% if cfg[name] %}checked{% endif %}>
+            <span class="text-sm text-slate-700">{{ label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+
+        <div class="mt-5">
+          <label class="mb-1 block text-sm font-medium text-slate-700">Optional custom clause</label>
+          <textarea name="custom_clause" rows="5" class="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder="Add any event-specific clause here. Leave blank if not needed.">{{ waiver['builder_config']['custom_clause'] }}</textarea>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="use_advanced_editor" name="use_advanced_editor" {% if waiver['builder_config']['use_advanced_editor'] %}checked{% endif %}>
+          <label for="use_advanced_editor" class="text-sm font-medium text-slate-800">Use advanced template editor</label>
+        </div>
+        <p class="mt-2 text-sm text-slate-600">Leave this off for the fast builder workflow. Turn it on only when you need fully custom legal wording.</p>
+
+        <details class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4" {% if waiver['builder_config']['use_advanced_editor'] %}open{% endif %}>
+          <summary class="cursor-pointer text-sm font-semibold text-slate-800">Advanced template body</summary>
+          <textarea name="body_template" rows="20" class="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 font-mono text-sm">{{ waiver['body_template'] if waiver else '' }}</textarea>
+          <p class="mt-2 text-xs text-slate-500">Supported placeholders: {{ "{{ organizer_name }}" }}, {{ "{{ venue_name }}" }}, {{ "{{ venue_address_full }}" }}, {{ "{{ charity_name }}" }}, {{ "{{ charity_description }}" }}, {{ "{{ release_parties }}" }}</p>
+          <p class="mt-1 text-xs text-slate-500">Conditional blocks still supported: {% raw %}{% if charity_name %}...{% endif %}{% endraw %}</p>
+        </details>
+      </div>
+
+      <div class="flex gap-3">
+        <button type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">Save Waiver</button>
+        <a href="{{ url_for('admin_waivers') }}" class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</a>
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 class="text-lg font-semibold text-slate-900">How this works</h2>
+        <ul class="mt-3 space-y-2 text-sm text-slate-600">
+          <li>Organizer and venue are still required on the show record.</li>
+          <li>Charity language only appears when the show has a charity.</li>
+          <li>Unused optional sections disappear automatically.</li>
+          <li>The signed participant still gets the exact waiver snapshot stored with the registration.</li>
+        </ul>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold text-slate-900">Preview</h2>
+          <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Sample organizer / venue shown</span>
+        </div>
+        <div class="mt-4 whitespace-pre-line rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800">{{ waiver['preview_text'] }}</div>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

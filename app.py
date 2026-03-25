@@ -1,6 +1,9 @@
 # Karman Kar Shows & Events — hardened app.py
 # 4-space indentation only (no tabs)
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import io
 import csv
@@ -88,9 +91,25 @@ from database import (
     set_active_show,
     set_upcoming_show,
     export_event_interest_signups_csv,
-    set_past_show
+    set_past_show,
+    list_waiver_templates,
+    get_waiver_template_by_id,
+    create_waiver_template,
+    update_waiver_template,
+    get_effective_waiver_template_for_show,
 )
 
+from waiver_system import (
+    PRESET_LABELS,
+    normalize_builder_config,
+    builder_config_to_json,
+    build_waiver_template_from_builder,
+    preview_text_from_builder,
+    sample_preview_show,
+    render_waiver_text,
+    validate_waiver_show_fields,
+    waiver_sha256,
+)
 
 APP_ENV = os.getenv("APP_ENV", os.getenv("FLASK_ENV", "production")).strip().lower()
 IS_DEV = APP_ENV in {"dev", "development", "local", "test", "testing"}
@@ -277,6 +296,82 @@ def _client_ip() -> str:
 def _user_agent() -> str:
     return (request.headers.get("User-Agent", "") or "")[:1000]
 
+
+
+def _show_with_rendered_waiver(show: Any) -> Any:
+    if not show:
+        return show
+
+    if isinstance(show, sqlite3.Row):
+        show_dict = {k: show[k] for k in show.keys()}
+    else:
+        show_dict = dict(show)
+
+    legacy_text = (show_dict.get("waiver_text") or "").strip()
+    legacy_version = (show_dict.get("waiver_version") or "").strip()
+
+    try:
+        validation_error = validate_waiver_show_fields(show_dict)
+        if validation_error:
+            raise ValueError(validation_error)
+
+        template_row = get_effective_waiver_template_for_show(int(show_dict["id"]))
+        if template_row:
+            rendered_text = render_waiver_text(template_row["body_template"], show_dict)
+            show_dict["waiver_text"] = rendered_text
+            show_dict["waiver_version"] = (template_row["version"] or "").strip()
+            show_dict["waiver_template_id"] = int(template_row["id"])
+            return show_dict
+    except Exception:
+        pass
+
+    show_dict["waiver_text"] = legacy_text
+    show_dict["waiver_version"] = legacy_version
+    return show_dict
+
+
+
+
+def _waiver_builder_config_from_request() -> Dict[str, Any]:
+    return normalize_builder_config({
+        "preset_key": request.form.get("preset_key", "standard"),
+        "include_assumption_of_risk": request.form.get("include_assumption_of_risk") == "on",
+        "include_release_of_liability": request.form.get("include_release_of_liability") == "on",
+        "include_indemnification": request.form.get("include_indemnification") == "on",
+        "include_vehicle_responsibility": request.form.get("include_vehicle_responsibility") == "on",
+        "include_rules_compliance": request.form.get("include_rules_compliance") == "on",
+        "include_no_custody": request.form.get("include_no_custody") == "on",
+        "include_media_release": request.form.get("include_media_release") == "on",
+        "include_charity_clause": request.form.get("include_charity_clause") == "on",
+        "include_venue_clause": request.form.get("include_venue_clause") == "on",
+        "include_right_to_remove": request.form.get("include_right_to_remove") == "on",
+        "custom_clause": request.form.get("custom_clause", ""),
+        "use_advanced_editor": request.form.get("use_advanced_editor") == "on",
+    })
+
+
+def _waiver_editor_payload(waiver: Optional[Any] = None, *, form_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data: Dict[str, Any] = {}
+    if waiver:
+        if isinstance(waiver, sqlite3.Row):
+            data = {k: waiver[k] for k in waiver.keys()}
+        else:
+            data = dict(waiver)
+
+    if form_override:
+        data.update(form_override)
+
+    builder_config = normalize_builder_config(data.get("builder_config"))
+    if form_override and form_override.get("builder_config") is not None:
+        builder_config = normalize_builder_config(form_override.get("builder_config"))
+
+    if not data.get("body_template") and not builder_config.get("use_advanced_editor"):
+        data["body_template"] = build_waiver_template_from_builder(builder_config)
+
+    data["builder_config"] = builder_config
+    data["preset_label"] = PRESET_LABELS.get(builder_config.get("preset_key", "standard"), "Standard Car Show")
+    data["preview_text"] = preview_text_from_builder(builder_config) if not builder_config.get("use_advanced_editor") else render_waiver_text(data.get("body_template", ""), sample_preview_show())
+    return data
 
 def _log_event(action: str, show_id: Optional[int] = None, details: Optional[Dict[str, Any]] = None, actor_type: str = "system") -> None:
     try:
@@ -593,7 +688,7 @@ def home():
 
 @app.get("/instructions/<show_slug>")
 def voting_instructions(show_slug: str):
-    show = get_show_by_slug(show_slug)
+    show = _show_with_rendered_waiver(get_show_by_slug(show_slug))
     if not show:
         return "Show not found.", 404
     return render_template("voting_instructions.html", show=show)
@@ -682,7 +777,7 @@ def show_page(slug: str):
     
 @app.get("/register")
 def register_page():
-    show = get_active_show()
+    show = _show_with_rendered_waiver(get_active_show())
     if not show:
         return "No active show cqonfigured.", 500
     if not prereg_allowed(show):
@@ -694,8 +789,9 @@ def register_page():
 
 @app.post("/register")
 @rate_limit("register", 20, 300)
+
 def register_submit():
-    show = get_active_show()
+    show = _show_with_rendered_waiver(get_active_show())
     if not show:
         return "No active show configured.", 500
     if not prereg_allowed(show):
@@ -729,8 +825,10 @@ def register_submit():
         return render_template("register.html", show=show, error="Car number must be a positive number.")
 
     registration_fee_cents = int(show["registration_fee_cents"] or 0)
-    waiver_text = (show["waiver_text"] or "").strip()
-    waiver_version = (show["waiver_version"] or "").strip()
+    waiver_text = (show.get("waiver_text") or "").strip()
+    waiver_version = (show.get("waiver_version") or "").strip()
+    waiver_template_id = int(show["waiver_template_id"]) if show.get("waiver_template_id") else None
+
     try:
         registration_intent_id, intent_token = create_registration_intent(
             show_id=int(show["id"]), owner_name=name, phone=phone, email=email,
@@ -738,6 +836,7 @@ def register_submit():
             car_number=car_number, year=year, make=make, model=model,
             waiver_accepted=waiver_accepted, waiver_signed_name=waiver_signed_name,
             waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+            waiver_template_id=waiver_template_id,
         )
     except ValueError as e:
         return render_template("register.html", show=show, error=str(e))
@@ -787,7 +886,6 @@ def register_submit():
     attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
     return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
 
-
 @app.get("/register-success/<show_slug>/<intent_token>")
 def registration_success(show_slug: str, intent_token: str):
     show = get_show_by_slug(show_slug)
@@ -820,7 +918,7 @@ def registration_success(show_slug: str, intent_token: str):
 
 @app.get("/claim/<show_slug>/<car_token>")
 def placeholder_claim_page(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
+    show = _show_with_rendered_waiver(get_show_by_slug(show_slug))
     if not show:
         return "Show not found.", 404
     car = get_show_car_private_by_token(int(show["id"]), car_token)
@@ -831,8 +929,9 @@ def placeholder_claim_page(show_slug: str, car_token: str):
 
 @app.post("/claim/<show_slug>/<car_token>")
 @rate_limit("claim", 20, 300)
+
 def placeholder_claim_submit(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
+    show = _show_with_rendered_waiver(get_show_by_slug(show_slug))
     if not show:
         return "Show not found.", 404
     car = get_show_car_private_by_token(int(show["id"]), car_token)
@@ -859,8 +958,9 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
 
     car_number = int(car["car_number"])
     registration_fee_cents = int(show["registration_fee_cents"] or 0)
-    waiver_text = (show["waiver_text"] or "").strip()
-    waiver_version = (show["waiver_version"] or "").strip()
+    waiver_text = (show.get("waiver_text") or "").strip()
+    waiver_version = (show.get("waiver_version") or "").strip()
+    waiver_template_id = int(show["waiver_template_id"]) if show.get("waiver_template_id") else None
     try:
         registration_intent_id, intent_token = create_registration_intent(
             show_id=int(show["id"]), owner_name=owner_name, phone=phone, email=email,
@@ -868,6 +968,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             car_number=car_number, year=year, make=make, model=model,
             waiver_accepted=True, waiver_signed_name=waiver_signed_name,
             waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+            waiver_template_id=waiver_template_id,
         )
     except ValueError:
         conn = _conn_direct()
@@ -880,13 +981,13 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                     show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
                     car_number, year, make, model,
                     waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
-                    amount_cents, payment_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    waiver_template_id, amount_cents, payment_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     int(show["id"]), intent_token, owner_name, phone, email, 1 if opt_in_future else 0, 1 if sponsor_opt_in else 0,
                     car_number, year, make, model, 1, waiver_signed_name, waiver_text, waiver_version,
-                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest(), registration_fee_cents,
+                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest(), waiver_template_id, registration_fee_cents,
                 ),
             )
             conn.commit()
@@ -923,7 +1024,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     session_obj = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']} (Car #{car_number})"}}, "quantity": 1}],
+        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']}"}}, "quantity": 1}],
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
@@ -933,13 +1034,11 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             "registration_intent_id": str(registration_intent_id),
             "intent_token": intent_token,
             "show_car_id": str(car["id"]),
-            "car_token": car_token,
         },
         stripe_account=acct,
     )
     attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
     return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
-
 
 @app.get("/claim-success/<show_slug>/<intent_token>")
 def placeholder_claim_success(show_slug: str, intent_token: str):
@@ -1048,13 +1147,21 @@ def checkin_submit(show_slug: str, car_token: str):
 
 @app.get("/waiver/<show_slug>/<car_token>")
 def waiver_print(show_slug: str, car_token: str):
-    show = get_show_by_slug(show_slug)
+    show = _show_with_rendered_waiver(get_show_by_slug(show_slug))
     if not show:
         return "Show not found.", 404
     car = get_show_car_private_by_token(int(show["id"]), car_token)
     if not car:
         return "Car not found.", 404
-    return render_template("waiver_print.html", show=show, car=car)
+
+    waiver_text = (car["waiver_text"] or "").strip() if "waiver_text" in car.keys() else ""
+    waiver_version = (car["waiver_version"] or "").strip() if "waiver_version" in car.keys() else ""
+    if not waiver_text:
+        waiver_text = (show.get("waiver_text") or "").strip()
+    if not waiver_version:
+        waiver_version = (show.get("waiver_version") or "").strip()
+
+    return render_template("waiver_print.html", show=show, car=car, waiver_text=waiver_text, waiver_version=waiver_version)
 
 
 @app.get("/attend/<show_slug>")
@@ -1259,6 +1366,7 @@ def vote_success():
 def admin_page():
     show = get_active_show()
     next_url = request.args.get("next", "")
+    registered_cars = count_registered_cars(int(show["id"])) if show else 0
 
     if not session.get("admin_authed"):
         return render_template(
@@ -1266,6 +1374,7 @@ def admin_page():
             show=show,
             authed=False,
             next=next_url,
+            registered_cars=registered_cars,
         )
 
     return render_template(
@@ -1273,6 +1382,7 @@ def admin_page():
         show=show,
         authed=True,
         next=next_url,
+        registered_cars=registered_cars,
     )
 
 @app.post("/admin/login")
@@ -1376,7 +1486,7 @@ def admin_show_settings():
     update_show_admin_settings(
         int(show["id"]), show_type, ov, max_cars, registration_fee_cents, attendee_fee_cents, vote_price_cents,
         request.form.get("public_vote_disclosure", ""), request.form.get("public_registration_disclosure", ""),
-        request.form.get("public_donation_disclosure", ""), request.form.get("waiver_text", ""), request.form.get("waiver_version", ""),
+        request.form.get("public_donation_disclosure", ""),
     )
     _log_event("admin.show_settings_saved", int(show["id"]), {"show_type": show_type, "max_cars": max_cars}, actor_type="admin")
     flash("Show settings saved.", "ok")
@@ -1387,7 +1497,12 @@ def admin_show_settings():
 @app.get("/admin/shows")
 @require_admin
 def admin_shows():
-    return render_template("admin_shows.html", shows=list_shows_admin(), show=get_active_show())
+    return render_template(
+        "admin_shows.html",
+        shows=list_shows_admin(),
+        show=get_active_show(),
+        waiver_templates=list_waiver_templates(),
+    )
 
 
 @app.post("/admin/shows/create")
@@ -1419,6 +1534,16 @@ def admin_shows_create():
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
         sort_order=int(request.form.get("sort_order", "100") or "100"),
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
+        waiver_template_id=int(request.form.get("waiver_template_id", "0") or "0") or None,
+        organizer_name=request.form.get("organizer_name", "").strip(),
+        venue_name=request.form.get("venue_name", "").strip(),
+        venue_address_line1=request.form.get("venue_address_line1", "").strip(),
+        venue_address_line2=request.form.get("venue_address_line2", "").strip(),
+        venue_city=request.form.get("venue_city", "").strip(),
+        venue_state=request.form.get("venue_state", "").strip(),
+        venue_zip=request.form.get("venue_zip", "").strip(),
+        charity_name=request.form.get("charity_name", "").strip(),
+        charity_description=request.form.get("charity_description", "").strip(),
     )
 
     flash("Show created.", "ok")
@@ -1447,6 +1572,16 @@ def admin_shows_update(show_id: int):
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
         sort_order=int(request.form.get("sort_order", "100") or "100"),
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
+        waiver_template_id=int(request.form.get("waiver_template_id", "0") or "0") or None,
+        organizer_name=request.form.get("organizer_name", "").strip(),
+        venue_name=request.form.get("venue_name", "").strip(),
+        venue_address_line1=request.form.get("venue_address_line1", "").strip(),
+        venue_address_line2=request.form.get("venue_address_line2", "").strip(),
+        venue_city=request.form.get("venue_city", "").strip(),
+        venue_state=request.form.get("venue_state", "").strip(),
+        venue_zip=request.form.get("venue_zip", "").strip(),
+        charity_name=request.form.get("charity_name", "").strip(),
+        charity_description=request.form.get("charity_description", "").strip(),
     )
 
     flash("Show updated.", "ok")
@@ -1473,6 +1608,107 @@ def admin_shows_set_past(show_id: int):
     set_past_show(show_id)
     flash("Show moved to past.", "ok")
     return redirect(url_for("admin_shows"))
+
+
+
+@app.get("/admin/waivers")
+@require_admin
+def admin_waivers():
+    return render_template("admin_waivers.html", templates=list_waiver_templates(), show=get_active_show(), preset_labels=PRESET_LABELS)
+
+
+@app.get("/admin/waivers/new")
+@require_admin
+def admin_waiver_new():
+    waiver = _waiver_editor_payload()
+    return render_template("admin_waiver_edit.html", waiver=waiver, show=get_active_show(), preset_labels=PRESET_LABELS)
+
+
+@app.post("/admin/waivers/new")
+@require_admin
+def admin_waiver_create():
+    title = request.form.get("title", "").strip()
+    version = request.form.get("version", "").strip()
+    is_default = request.form.get("is_default", "") == "on"
+    builder_config = _waiver_builder_config_from_request()
+    body_template = request.form.get("body_template", "").strip()
+    if not builder_config.get("use_advanced_editor"):
+        body_template = build_waiver_template_from_builder(builder_config)
+
+    waiver = _waiver_editor_payload(form_override={
+        "title": title,
+        "version": version,
+        "body_template": body_template,
+        "is_default": 1 if is_default else 0,
+        "builder_config": builder_config,
+    })
+
+    if not (title and version and body_template):
+        flash("Title, version, and waiver content are required.", "error")
+        return render_template("admin_waiver_edit.html", waiver=waiver, show=get_active_show(), preset_labels=PRESET_LABELS)
+
+    create_waiver_template(
+        title=title,
+        version=version,
+        body_template=body_template,
+        is_default=is_default,
+        preset_key=builder_config.get("preset_key", "standard"),
+        builder_config=builder_config_to_json(builder_config),
+    )
+    flash("Waiver template created.", "ok")
+    return redirect(url_for("admin_waivers"))
+
+
+@app.get("/admin/waivers/<int:waiver_template_id>/edit")
+@require_admin
+def admin_waiver_edit(waiver_template_id: int):
+    waiver = get_waiver_template_by_id(waiver_template_id)
+    if not waiver:
+        return "Waiver template not found.", 404
+    return render_template("admin_waiver_edit.html", waiver=_waiver_editor_payload(waiver), show=get_active_show(), preset_labels=PRESET_LABELS)
+
+
+@app.post("/admin/waivers/<int:waiver_template_id>/edit")
+@require_admin
+def admin_waiver_update(waiver_template_id: int):
+    existing = get_waiver_template_by_id(waiver_template_id)
+    if not existing:
+        return "Waiver template not found.", 404
+
+    title = request.form.get("title", "").strip()
+    version = request.form.get("version", "").strip()
+    is_default = request.form.get("is_default", "") == "on"
+    builder_config = _waiver_builder_config_from_request()
+    body_template = request.form.get("body_template", "").strip()
+    if not builder_config.get("use_advanced_editor"):
+        body_template = build_waiver_template_from_builder(builder_config)
+
+    waiver = _waiver_editor_payload(existing, form_override={
+        "id": waiver_template_id,
+        "title": title,
+        "version": version,
+        "body_template": body_template,
+        "is_default": 1 if is_default else 0,
+        "builder_config": builder_config,
+    })
+
+    if not (title and version and body_template):
+        flash("Title, version, and waiver content are required.", "error")
+        return render_template("admin_waiver_edit.html", waiver=waiver, show=get_active_show(), preset_labels=PRESET_LABELS)
+
+    update_waiver_template(
+        waiver_template_id=waiver_template_id,
+        title=title,
+        version=version,
+        body_template=body_template,
+        is_default=is_default,
+        preset_key=builder_config.get("preset_key", "standard"),
+        builder_config=builder_config_to_json(builder_config),
+    )
+    flash("Waiver template updated.", "ok")
+    return redirect(url_for("admin_waivers"))
+
+
 
 @app.get("/admin/print-cards.pdf")
 @require_admin

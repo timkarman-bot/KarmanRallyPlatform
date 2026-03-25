@@ -11,6 +11,8 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
+from waiver_system import DEFAULT_WAIVER_TEMPLATE, builder_config_to_json, normalize_builder_config
+
 DB_PATH = os.getenv("DB_PATH")
 if not DB_PATH:
     DB_PATH = "/data/app.db" if os.path.isdir("/data") else "app.db"
@@ -77,6 +79,23 @@ def init_db() -> None:
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS waiver_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            version TEXT NOT NULL,
+            body_template TEXT NOT NULL,
+            preset_key TEXT NOT NULL DEFAULT 'standard',
+            builder_config TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
     for sql in [
         "ALTER TABLE shows ADD COLUMN show_type TEXT NOT NULL DEFAULT 'full'",
         "ALTER TABLE shows ADD COLUMN allow_prereg_override INTEGER",
@@ -102,6 +121,16 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN charity_connect_email TEXT",
         "ALTER TABLE shows ADD COLUMN waiver_text TEXT",
         "ALTER TABLE shows ADD COLUMN waiver_version TEXT",
+        "ALTER TABLE shows ADD COLUMN waiver_template_id INTEGER",
+        "ALTER TABLE shows ADD COLUMN organizer_name TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_name TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_address_line1 TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_address_line2 TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_city TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_state TEXT",
+        "ALTER TABLE shows ADD COLUMN venue_zip TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_name TEXT",
+        "ALTER TABLE shows ADD COLUMN charity_description TEXT",
         "ALTER TABLE shows ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
         "ALTER TABLE shows ADD COLUMN short_details TEXT",
         "ALTER TABLE shows ADD COLUMN qr_message TEXT",
@@ -120,6 +149,15 @@ def init_db() -> None:
             cur.execute(sql)
         except sqlite3.OperationalError:
             pass
+
+    try:
+        cur.execute("ALTER TABLE waiver_templates ADD COLUMN preset_key TEXT NOT NULL DEFAULT 'standard'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE waiver_templates ADD COLUMN builder_config TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute(
         """
@@ -176,6 +214,9 @@ def init_db() -> None:
         "ALTER TABLE show_cars ADD COLUMN waiver_signed_name TEXT",
         "ALTER TABLE show_cars ADD COLUMN waiver_signed_at TEXT",
         "ALTER TABLE show_cars ADD COLUMN waiver_version TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_text TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_text_sha256 TEXT",
+        "ALTER TABLE show_cars ADD COLUMN waiver_template_id INTEGER",
         "ALTER TABLE show_cars ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE show_cars ADD COLUMN registration_state TEXT NOT NULL DEFAULT 'paid'",
         "ALTER TABLE show_cars ADD COLUMN checked_in_at TEXT",
@@ -220,6 +261,7 @@ def init_db() -> None:
 
     for sql in [
         "ALTER TABLE registration_intents ADD COLUMN waiver_text_sha256 TEXT",
+        "ALTER TABLE registration_intents ADD COLUMN waiver_template_id INTEGER",
     ]:
         try:
             cur.execute(sql)
@@ -445,6 +487,16 @@ def init_db() -> None:
         """
     )
 
+    row = cur.execute("SELECT id FROM waiver_templates WHERE is_default = 1 LIMIT 1").fetchone()
+    if not row:
+        cur.execute(
+            """
+            INSERT INTO waiver_templates (title, version, body_template, preset_key, builder_config, is_default, is_active, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, 1, datetime('now'))
+            """,
+            ("Master Participant Waiver", "2026.03.25", DEFAULT_WAIVER_TEMPLATE, "standard", builder_config_to_json(normalize_builder_config({}))),
+        )
+
     for sql in [
         "CREATE INDEX IF NOT EXISTS idx_shows_active ON shows(is_active)",
         "CREATE INDEX IF NOT EXISTS idx_shows_status ON shows(status)",
@@ -519,6 +571,74 @@ def get_active_show() -> Optional[sqlite3.Row]:
     return row
 
 
+def get_waiver_template_by_id(waiver_template_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM waiver_templates WHERE id = ? LIMIT 1", (int(waiver_template_id),)).fetchone()
+    conn.close()
+    return row
+
+
+def list_waiver_templates() -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT * FROM waiver_templates WHERE is_active = 1 ORDER BY is_default DESC, id DESC"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_effective_waiver_template_for_show(show_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    show = conn.execute("SELECT waiver_template_id FROM shows WHERE id = ? LIMIT 1", (int(show_id),)).fetchone()
+    if show and show["waiver_template_id"]:
+        row = conn.execute("SELECT * FROM waiver_templates WHERE id = ? LIMIT 1", (int(show["waiver_template_id"]),)).fetchone()
+        conn.close()
+        if row:
+            return row
+        return None
+    row = conn.execute("SELECT * FROM waiver_templates WHERE is_default = 1 AND is_active = 1 LIMIT 1").fetchone()
+    conn.close()
+    return row
+
+
+def create_waiver_template(*, title: str, version: str, body_template: str, is_default: bool = False, preset_key: str = "standard", builder_config: str = "") -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    if is_default:
+        cur.execute("UPDATE waiver_templates SET is_default = 0")
+    cur.execute(
+        """
+        INSERT INTO waiver_templates (title, version, body_template, preset_key, builder_config, is_default, is_active, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
+        """,
+        ((title or "").strip(), (version or "").strip(), body_template or "", (preset_key or "standard").strip() or "standard", builder_config or None, 1 if is_default else 0),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
+
+
+
+def update_waiver_template(*, waiver_template_id: int, title: str, version: str, body_template: str, is_default: bool = False, preset_key: str = "standard", builder_config: str = "") -> None:
+    conn = _conn()
+    cur = conn.cursor()
+    if is_default:
+        cur.execute("UPDATE waiver_templates SET is_default = 0")
+    cur.execute(
+        """
+        UPDATE waiver_templates
+        SET title = ?, version = ?, body_template = ?, preset_key = ?, builder_config = ?, is_default = ?, updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        ((title or "").strip(), (version or "").strip(), body_template or "", (preset_key or "standard").strip() or "standard", builder_config or None, 1 if is_default else 0, int(waiver_template_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+
+
 def get_show_by_id(show_id: int) -> Optional[sqlite3.Row]:
     conn = _conn()
     row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
@@ -571,6 +691,7 @@ def get_next_upcoming_show() -> Optional[sqlite3.Row]:
     return row
 
 
+
 def create_show_admin(
     *,
     slug: str,
@@ -591,6 +712,16 @@ def create_show_admin(
     show_on_site: int,
     sort_order: int,
     hide_address: int = 0,
+    waiver_template_id: Optional[int] = None,
+    organizer_name: str = "",
+    venue_name: str = "",
+    venue_address_line1: str = "",
+    venue_address_line2: str = "",
+    venue_city: str = "",
+    venue_state: str = "",
+    venue_zip: str = "",
+    charity_name: str = "",
+    charity_description: str = "",
 ) -> int:
     conn = _conn()
     cur = conn.cursor()
@@ -599,14 +730,16 @@ def create_show_admin(
         INSERT INTO shows (
             slug, flyer_image_path, title, date, time, location_name, address, benefiting,
             suggested_donation, description, status, short_details, qr_message,
-            cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active
+            cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
+            waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
+            venue_city, venue_state, venue_zip, charity_name, charity_description
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slug.strip(),
-            title.strip(),
             (flyer_image_path or "").strip(),
+            title.strip(),
             (date or "").strip(),
             (time or "").strip(),
             (location_name or "").strip(),
@@ -622,12 +755,24 @@ def create_show_admin(
             int(show_on_site),
             int(sort_order),
             int(hide_address),
+            waiver_template_id,
+            (organizer_name or "").strip(),
+            (venue_name or "").strip(),
+            (venue_address_line1 or "").strip(),
+            (venue_address_line2 or "").strip(),
+            (venue_city or "").strip(),
+            (venue_state or "").strip(),
+            (venue_zip or "").strip(),
+            (charity_name or "").strip(),
+            (charity_description or "").strip(),
         ),
     )
     conn.commit()
     rid = int(cur.lastrowid)
     conn.close()
     return rid
+
+
 
 def update_show_admin_record(
     show_id: int,
@@ -650,20 +795,33 @@ def update_show_admin_record(
     show_on_site: int,
     sort_order: int,
     hide_address: int = 0,
+    waiver_template_id: Optional[int] = None,
+    organizer_name: str = "",
+    venue_name: str = "",
+    venue_address_line1: str = "",
+    venue_address_line2: str = "",
+    venue_city: str = "",
+    venue_state: str = "",
+    venue_zip: str = "",
+    charity_name: str = "",
+    charity_description: str = "",
 ) -> None:
     conn = _conn()
     conn.execute(
         """
         UPDATE shows
-        SET slug = ?, title = ?, date = ?, time = ?, location_name = ?, address = ?,
+        SET slug = ?, title = ?, flyer_image_path = ?, date = ?, time = ?, location_name = ?, address = ?,
             benefiting = ?, suggested_donation = ?, description = ?, status = ?,
             short_details = ?, qr_message = ?, cta_label = ?, cta_url = ?,
-            show_on_site = ?, sort_order = ?, hide_address = ?
+            show_on_site = ?, sort_order = ?, hide_address = ?, waiver_template_id = ?,
+            organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
+            venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?
         WHERE id = ?
         """,
         (
             slug.strip(),
             title.strip(),
+            (flyer_image_path or "").strip(),
             (date or "").strip(),
             (time or "").strip(),
             (location_name or "").strip(),
@@ -679,11 +837,22 @@ def update_show_admin_record(
             int(show_on_site),
             int(sort_order),
             int(hide_address),
+            waiver_template_id,
+            (organizer_name or "").strip(),
+            (venue_name or "").strip(),
+            (venue_address_line1 or "").strip(),
+            (venue_address_line2 or "").strip(),
+            (venue_city or "").strip(),
+            (venue_state or "").strip(),
+            (venue_zip or "").strip(),
+            (charity_name or "").strip(),
+            (charity_description or "").strip(),
             show_id,
         ),
     )
     conn.commit()
     conn.close()
+
 
 def set_active_show(show_id: int) -> None:
     conn = _conn()
@@ -754,6 +923,7 @@ def toggle_show_voting(show_id: int) -> None:
     conn.close()
 
 
+
 def update_show_admin_settings(
     show_id: int,
     show_type: str,
@@ -765,8 +935,8 @@ def update_show_admin_settings(
     public_vote_disclosure: str,
     public_registration_disclosure: str,
     public_donation_disclosure: str,
-    waiver_text: str,
-    waiver_version: str,
+    waiver_text: str = "",
+    waiver_version: str = "",
 ) -> None:
     st = (show_type or "full").strip().lower()
     if st not in ("popup", "full"):
@@ -806,7 +976,6 @@ def update_show_admin_settings(
         """
         UPDATE shows
         SET show_type = ?,
-            flyer_image_path = ?,
             allow_prereg_override = ?,
             max_cars = ?,
             registration_fee_cents = ?,
@@ -815,8 +984,8 @@ def update_show_admin_settings(
             public_vote_disclosure = ?,
             public_registration_disclosure = ?,
             public_donation_disclosure = ?,
-            waiver_text = ?,
-            waiver_version = ?
+            waiver_text = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_text END,
+            waiver_version = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_version END
         WHERE id = ?
         """,
         (
@@ -826,11 +995,12 @@ def update_show_admin_settings(
             registration_fee_cents,
             attendee_fee_cents,
             vote_price_cents,
-            (flyer_image_path or "").strip(),
             (public_vote_disclosure or "").strip(),
             (public_registration_disclosure or "").strip(),
             (public_donation_disclosure or "").strip(),
             (waiver_text or "").strip(),
+            (waiver_text or "").strip(),
+            (waiver_version or "").strip(),
             (waiver_version or "").strip(),
             show_id,
         ),
@@ -1048,6 +1218,7 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
 
 # REGISTRATION INTENTS
 
+
 def create_registration_intent(
     show_id: int,
     owner_name: str,
@@ -1064,6 +1235,7 @@ def create_registration_intent(
     waiver_text: str,
     waiver_version: str,
     amount_cents: int,
+    waiver_template_id: Optional[int] = None,
 ) -> Tuple[int, str]:
     conn = _conn()
     cur = conn.cursor()
@@ -1084,9 +1256,9 @@ def create_registration_intent(
             show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
             car_number, year, make, model,
             waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
-            amount_cents, payment_status
+            waiver_template_id, amount_cents, payment_status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
         """,
         (
             show_id,
@@ -1105,6 +1277,7 @@ def create_registration_intent(
             waiver_text,
             waiver_version,
             _sha256_text(waiver_text),
+            waiver_template_id,
             int(amount_cents),
         ),
     )
@@ -1205,11 +1378,11 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
             INSERT INTO show_cars (
                 show_id, person_id, car_number, car_token, year, make, model,
                 registration_payment_status, registration_amount_cents, registration_session_id,
-                waiver_signed_name, waiver_signed_at, waiver_version,
+                waiver_signed_name, waiver_signed_at, waiver_version, waiver_text, waiver_text_sha256, waiver_template_id,
                 waiver_received, waiver_received_at, waiver_received_by,
                 is_placeholder, registration_state
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 1, datetime('now'), 'electronic', 0, 'paid')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 1, datetime('now'), 'electronic', 0, 'paid')
             """,
             (
                 show_id,
@@ -1224,6 +1397,9 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                 stripe_session_id,
                 ri["waiver_signed_name"],
                 ri["waiver_version"],
+                ri["waiver_text"],
+                ri["waiver_text_sha256"],
+                ri["waiver_template_id"] if "waiver_template_id" in ri.keys() else None,
             ),
         )
         show_car_id = int(cur.lastrowid)
