@@ -17,6 +17,8 @@ from typing import Dict, Optional, Any, Callable
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse
+from werkzeug.utils import secure_filename
+from flask import send_from_directory
 
 import stripe
 from flask import (
@@ -267,6 +269,36 @@ def _show_preset_vote_options(show: Any) -> list[int]:
                 out.append(n)
     return out or [1, 5, 10, 20, 25]
 
+def _flyer_upload_dir() -> Path:
+    p = Path("/data/uploads/flyers") if os.path.isdir("/data") else Path(app.instance_path) / "uploads" / "flyers"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _allowed_flyer_file(filename: str) -> bool:
+    if not filename or "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    return ext in {"jpg", "jpeg", "png", "webp"}
+
+
+def _save_uploaded_flyer(file_storage, slug: str) -> str:
+    if not file_storage or not file_storage.filename:
+        return ""
+
+    if not _allowed_flyer_file(file_storage.filename):
+        raise ValueError("Flyer must be a JPG, JPEG, PNG, or WEBP file.")
+
+    original = secure_filename(file_storage.filename)
+    ext = original.rsplit(".", 1)[1].lower()
+    stamp = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y%m%d-%H%M%S")
+    safe_slug = secure_filename(slug or "show") or "show"
+    filename = f"{safe_slug}-{stamp}.{ext}"
+
+    save_path = _flyer_upload_dir() / filename
+    file_storage.save(save_path)
+
+    return f"/uploads/flyers/{filename}"
 
 def _show_allow_custom_votes(show: Any) -> bool:
     try:
@@ -737,6 +769,9 @@ def home():
         return "No active show configured.", 500
     return render_template("home.html", show=show)
 
+@app.get("/uploads/flyers/<path:filename>")
+def uploaded_flyer(filename: str):
+    return send_from_directory(_flyer_upload_dir(), filename)
 
 @app.get("/instructions/<show_slug>")
 def voting_instructions(show_slug: str):
@@ -1887,10 +1922,19 @@ def admin_shows_create():
     except ValueError:
         max_votes_per_checkout = 50
 
-    create_show_admin(
-        slug=slug,
-        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
-        title=title,
+    flyer_image_path = request.form.get("flyer_image_path", "").strip()
+flyer_file = request.files.get("flyer_image")
+
+if flyer_file and flyer_file.filename:
+    try:
+        flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
+    except ValueError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin_shows"))
+
+create_show_admin(
+    slug=slug,
+    flyer_image_path=flyer_image_path,        title=title,
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
         location_name=request.form.get("location_name", "").strip(),
@@ -1957,7 +2001,19 @@ def admin_shows_update(show_id: int):
         show_id,
         slug=request.form.get("slug", "").strip(),
         title=request.form.get("title", "").strip(),
-        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
+        flyer_image_path = request.form.get("flyer_image_path", "").strip()
+flyer_file = request.files.get("flyer_image")
+
+if flyer_file and flyer_file.filename:
+    try:
+        flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
+    except ValueError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin_shows"))
+
+create_show_admin(
+    slug=slug,
+    flyer_image_path=flyer_image_path,flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
         location_name=request.form.get("location_name", "").strip(),
