@@ -198,7 +198,6 @@ ATTENDEE_CONSENT_TEXT = (
 ATTENDEE_CONSENT_VERSION = "2026-03-11"
 
 
-
 def prereg_allowed(show) -> bool:
     if not show:
         return False
@@ -228,6 +227,52 @@ def _parse_dollars_to_cents(value: str, default_cents: int = 0) -> int:
         return max(0, int(round(float((value or "").strip()) * 100)))
     except Exception:
         return default_cents
+
+
+def _show_payment_mode(show: Any) -> str:
+    if not show:
+        return "stripe"
+    value = (show["payment_mode"] if "payment_mode" in show.keys() else "stripe") or "stripe"
+    value = str(value).strip().lower()
+    return value if value in {"stripe", "external"} else "stripe"
+
+
+def _show_voting_mode(show: Any) -> str:
+    if not show:
+        return "fundraiser_unlimited"
+    value = (show["voting_mode"] if "voting_mode" in show.keys() else "fundraiser_unlimited") or "fundraiser_unlimited"
+    value = str(value).strip().lower()
+    return value if value in {"fundraiser_unlimited", "restricted_single"} else "fundraiser_unlimited"
+
+
+def _show_max_votes_per_checkout(show: Any) -> int:
+    try:
+        return max(1, int(show["max_votes_per_checkout"] or 50))
+    except Exception:
+        return 50
+
+
+def _show_preset_vote_options(show: Any) -> list[int]:
+    raw = ""
+    try:
+        raw = (show["preset_vote_options"] or "").strip()
+    except Exception:
+        raw = ""
+    out = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            n = int(part)
+            if n > 0 and n not in out:
+                out.append(n)
+    return out or [1, 5, 10, 20, 25]
+
+
+def _show_allow_custom_votes(show: Any) -> bool:
+    try:
+        return int(show["allow_custom_votes"] or 0) == 1
+    except Exception:
+        return True
 
 
 def _connected_account_id(show) -> Optional[str]:
@@ -297,7 +342,6 @@ def _user_agent() -> str:
     return (request.headers.get("User-Agent", "") or "")[:1000]
 
 
-
 def _show_with_rendered_waiver(show: Any) -> Any:
     if not show:
         return show
@@ -328,8 +372,6 @@ def _show_with_rendered_waiver(show: Any) -> Any:
     show_dict["waiver_text"] = legacy_text
     show_dict["waiver_version"] = legacy_version
     return show_dict
-
-
 
 
 def _waiver_builder_config_from_request() -> Dict[str, Any]:
@@ -373,6 +415,7 @@ def _waiver_editor_payload(waiver: Optional[Any] = None, *, form_override: Optio
     data["preview_text"] = preview_text_from_builder(builder_config) if not builder_config.get("use_advanced_editor") else render_waiver_text(data.get("body_template", ""), sample_preview_show())
     return data
 
+
 def _log_event(action: str, show_id: Optional[int] = None, details: Optional[Dict[str, Any]] = None, actor_type: str = "system") -> None:
     try:
         log_audit_event(
@@ -403,7 +446,8 @@ def _same_origin_allowed() -> bool:
         return urlparse(referer).netloc == request_host
 
     return True
-    
+
+
 @app.before_request
 def security_before_request():
     session.permanent = True
@@ -431,7 +475,9 @@ def rate_limit(bucket_name: str, limit: int, window_seconds: int) -> Callable:
             bucket_key = f"{bucket_name}:{request.endpoint}:{ip}"
             count = rate_limit_increment(bucket_key, window_seconds)
             if count > limit:
-                return render_template("payment_not_complete.html"), 429 if request.accept_mimetypes.accept_html else (jsonify({"ok": False, "error": "Too many requests. Please slow down."}), 429)
+                if request.accept_mimetypes.accept_html:
+                    return render_template("payment_not_complete.html"), 429
+                return jsonify({"ok": False, "error": "Too many requests. Please slow down."}), 429
             return view_func(*args, **kwargs)
         return wrapped
     return decorator
@@ -466,9 +512,9 @@ def _save_waiver_capture_html(
     waiver_hash = hashlib.sha256((waiver_text or "").encode("utf-8")).hexdigest()
 
     html_doc = f"""<!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-<meta charset=\"utf-8\">
+<meta charset="utf-8">
 <title>Waiver Capture - Car #{car_number}</title>
 <style>
 body {{ font-family: Arial, Helvetica, sans-serif; line-height: 1.45; margin: 40px; color: #111827; }}
@@ -480,27 +526,27 @@ pre {{ white-space: pre-wrap; font-family: Arial, Helvetica, sans-serif; }}
 </head>
 <body>
 <h1>Electronic Waiver Capture</h1>
-<div class=\"small\">Generated {escape(now_local.isoformat())} America/Chicago / {escape(now_utc.isoformat())} UTC</div>
-<div class=\"small\">Request Path: {escape(request_path)} | IP: {escape(ip_address)} | User Agent: {escape(user_agent)}</div>
-<div class=\"box\"><h2>Show</h2>
+<div class="small">Generated {escape(now_local.isoformat())} America/Chicago / {escape(now_utc.isoformat())} UTC</div>
+<div class="small">Request Path: {escape(request_path)} | IP: {escape(ip_address)} | User Agent: {escape(user_agent)}</div>
+<div class="box"><h2>Show</h2>
 <div><strong>Title:</strong> {escape(str(show.get('title') or ''))}</div>
 <div><strong>Slug:</strong> {escape(str(show.get('slug') or ''))}</div>
 <div><strong>Car Number:</strong> #{car_number}</div>
 <div><strong>Vehicle:</strong> {escape(year)} {escape(make)} {escape(model)}</div>
 </div>
-<div class=\"box\"><h2>Owner</h2>
+<div class="box"><h2>Owner</h2>
 <div><strong>Name:</strong> {escape(owner_name)}</div>
 <div><strong>Phone:</strong> {escape(phone)}</div>
 <div><strong>Email:</strong> {escape(email)}</div>
 <div><strong>Future Show Updates:</strong> {'Yes' if opt_in_future else 'No'}</div>
 <div><strong>Sponsor Information:</strong> {'Yes' if sponsor_opt_in else 'No'}</div>
 </div>
-<div class=\"box\"><h2>Waiver</h2>
+<div class="box"><h2>Waiver</h2>
 <div><strong>Waiver Version:</strong> {escape(waiver_version)}</div>
 <div><strong>Waiver SHA-256:</strong> {escape(waiver_hash)}</div>
 <pre>{escape(waiver_text)}</pre>
 </div>
-<div class=\"box\"><h2>Signature</h2>
+<div class="box"><h2>Signature</h2>
 <div><strong>Typed Signature:</strong> {escape(signed_name)}</div>
 <div><strong>Intent Token:</strong> {escape(intent_token)}</div>
 </div>
@@ -616,8 +662,14 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
             WHERE id = ?
             """,
             (
-                ri["year"], ri["make"], ri["model"], int(ri["amount_cents"] or 0), stripe_session_id,
-                ri["waiver_signed_name"], ri["waiver_version"], show_car_id,
+                ri["year"],
+                ri["make"],
+                ri["model"],
+                int(ri["amount_cents"] or 0),
+                stripe_session_id,
+                ri["waiver_signed_name"],
+                ri["waiver_version"],
+                show_car_id,
             ),
         )
 
@@ -706,7 +758,8 @@ def events():
         upcoming_show=upcoming_show,
         hide_nav=True,
     )
-    
+
+
 @app.post("/event-updates-signup")
 @rate_limit("event_updates_signup", 20, 300)
 def event_updates_signup():
@@ -747,16 +800,10 @@ def event_updates_signup():
         source=source,
     )
 
-    # FUTURE DRIP / AUTO-MESSAGING PLACEHOLDER
-    # ----------------------------------------
-    # if wants_email and email:
-    #     send_upcoming_event_email(to_email=email, first_name=first_name)
-    # if wants_text and phone:
-    #     send_upcoming_event_text(to_phone=phone, first_name=first_name)
-
     flash("You're on the list. Updates and reminders coming soon.", "ok")
     return redirect(url_for("events"))
-   
+
+
 @app.get("/show/<slug>")
 def show_page(slug: str):
     show = get_show_by_slug(slug)
@@ -774,12 +821,13 @@ def show_page(slug: str):
         show=show,
         not_found=False,
     )
-    
+
+
 @app.get("/register")
 def register_page():
     show = _show_with_rendered_waiver(get_active_show())
     if not show:
-        return "No active show cqonfigured.", 500
+        return "No active show configured.", 500
     if not prereg_allowed(show):
         return render_template("registration_closed.html", show=show), 403
     if not show_has_capacity(int(show["id"])):
@@ -789,7 +837,6 @@ def register_page():
 
 @app.post("/register")
 @rate_limit("register", 20, 300)
-
 def register_submit():
     show = _show_with_rendered_waiver(get_active_show())
     if not show:
@@ -817,6 +864,7 @@ def register_submit():
         return render_template("register.html", show=show, error="Phone number is required if you opt in to updates or sponsor information.")
     if not waiver_accepted:
         return render_template("register.html", show=show, error="You must accept the waiver to continue.")
+
     try:
         car_number = int(car_number_raw)
         if car_number <= 0:
@@ -831,47 +879,100 @@ def register_submit():
 
     try:
         registration_intent_id, intent_token = create_registration_intent(
-            show_id=int(show["id"]), owner_name=name, phone=phone, email=email,
-            opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-            car_number=car_number, year=year, make=make, model=model,
-            waiver_accepted=waiver_accepted, waiver_signed_name=waiver_signed_name,
-            waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+            show_id=int(show["id"]),
+            owner_name=name,
+            phone=phone,
+            email=email,
+            opt_in_future=opt_in_future,
+            sponsor_opt_in=sponsor_opt_in,
+            car_number=car_number,
+            year=year,
+            make=make,
+            model=model,
+            waiver_accepted=waiver_accepted,
+            waiver_signed_name=waiver_signed_name,
+            waiver_text=waiver_text,
+            waiver_version=waiver_version,
+            amount_cents=registration_fee_cents,
             waiver_template_id=waiver_template_id,
         )
     except ValueError as e:
         return render_template("register.html", show=show, error=str(e))
 
     html_path = _save_waiver_capture_html(
-        show=show, car_number=car_number, owner_name=name, phone=phone, email=email,
-        year=year, make=make, model=model, opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-        waiver_text=waiver_text, waiver_version=waiver_version, signed_name=waiver_signed_name,
-        intent_token=intent_token, request_path=request.path, ip_address=_client_ip(), user_agent=_user_agent(),
+        show=show,
+        car_number=car_number,
+        owner_name=name,
+        phone=phone,
+        email=email,
+        year=year,
+        make=make,
+        model=model,
+        opt_in_future=opt_in_future,
+        sponsor_opt_in=sponsor_opt_in,
+        waiver_text=waiver_text,
+        waiver_version=waiver_version,
+        signed_name=waiver_signed_name,
+        intent_token=intent_token,
+        request_path=request.path,
+        ip_address=_client_ip(),
+        user_agent=_user_agent(),
     )
     _record_waiver_evidence(
-        show=show, registration_intent_id=registration_intent_id, show_car_id=None, car_number=car_number,
-        owner_name=name, phone=phone, email=email, year=year, make=make, model=model,
-        opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in, waiver_text=waiver_text,
-        waiver_version=waiver_version, signed_name=waiver_signed_name, intent_token=intent_token, html_path=html_path,
+        show=show,
+        registration_intent_id=registration_intent_id,
+        show_car_id=None,
+        car_number=car_number,
+        owner_name=name,
+        phone=phone,
+        email=email,
+        year=year,
+        make=make,
+        model=model,
+        opt_in_future=opt_in_future,
+        sponsor_opt_in=sponsor_opt_in,
+        waiver_text=waiver_text,
+        waiver_version=waiver_version,
+        signed_name=waiver_signed_name,
+        intent_token=intent_token,
+        html_path=html_path,
     )
 
     if registration_fee_cents <= 0:
         synthetic_session_id = f"free_reg_{intent_token}"
-        attach_stripe_session_to_registration_intent(registration_intent_id, synthetic_session_id, stripe_payment_intent_id="")
+        attach_stripe_session_to_registration_intent(
+            registration_intent_id,
+            synthetic_session_id,
+            stripe_payment_intent_id="",
+        )
         result = finalize_registration_intent_paid(synthetic_session_id)
         car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
-        _log_event("registration.free_finalized", int(show["id"]), {"car_number": car_number, "registration_intent_id": registration_intent_id}, actor_type="public")
+        _log_event(
+            "registration.free_finalized",
+            int(show["id"]),
+            {"car_number": car_number, "registration_intent_id": registration_intent_id},
+            actor_type="public",
+        )
         return render_template("register_success.html", show=show, car=car)
 
     acct = _connected_account_id(show)
     if not acct:
         return render_template("register.html", show=show, error="This show does not have a charity payment account connected yet. Please contact the organizer.")
+
     _require_platform_stripe()
     success_url = _abs_url(url_for("registration_success", show_slug=show["slug"], intent_token=intent_token)) + "?session_id={CHECKOUT_SESSION_ID}"
     cancel_url = _abs_url(url_for("register_page"))
     session_obj = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']}"}}, "quantity": 1}],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "unit_amount": registration_fee_cents,
+                "product_data": {"name": f"Registration – {show['title']}"},
+            },
+            "quantity": 1,
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
@@ -884,7 +985,14 @@ def register_submit():
         stripe_account=acct,
     )
     attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
+    return render_template(
+        "register_checkout.html",
+        show=show,
+        car={"year": year, "make": make, "model": model},
+        car_number=car_number,
+        checkout_url=session_obj.url,
+    )
+
 
 @app.get("/register-success/<show_slug>/<intent_token>")
 def registration_success(show_slug: str, intent_token: str):
@@ -894,23 +1002,29 @@ def registration_success(show_slug: str, intent_token: str):
     ri = get_registration_intent_by_token(intent_token)
     if not ri or int(ri["show_id"]) != int(show["id"]):
         return "Registration not found.", 404
+
     session_id = request.args.get("session_id", "").strip()
     if ri["finalized_show_car_id"]:
         result = finalize_registration_intent_paid(ri["stripe_session_id"])
         car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
         return render_template("register_success.html", show=show, car=car)
+
     if not session_id:
         return render_template("payment_not_complete.html")
+
     acct = _connected_account_id(show)
     if not acct:
         return render_template("payment_not_complete.html")
+
     _require_platform_stripe()
     try:
         sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
     except Exception:
         return render_template("payment_not_complete.html")
+
     if sess.payment_status != "paid":
         return render_template("payment_not_complete.html")
+
     result = finalize_registration_intent_paid(sess.id)
     car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
     return render_template("register_success.html", show=show, car=car)
@@ -929,7 +1043,6 @@ def placeholder_claim_page(show_slug: str, car_token: str):
 
 @app.post("/claim/<show_slug>/<car_token>")
 @rate_limit("claim", 20, 300)
-
 def placeholder_claim_submit(show_slug: str, car_token: str):
     show = _show_with_rendered_waiver(get_show_by_slug(show_slug))
     if not show:
@@ -961,13 +1074,24 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     waiver_text = (show.get("waiver_text") or "").strip()
     waiver_version = (show.get("waiver_version") or "").strip()
     waiver_template_id = int(show["waiver_template_id"]) if show.get("waiver_template_id") else None
+
     try:
         registration_intent_id, intent_token = create_registration_intent(
-            show_id=int(show["id"]), owner_name=owner_name, phone=phone, email=email,
-            opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-            car_number=car_number, year=year, make=make, model=model,
-            waiver_accepted=True, waiver_signed_name=waiver_signed_name,
-            waiver_text=waiver_text, waiver_version=waiver_version, amount_cents=registration_fee_cents,
+            show_id=int(show["id"]),
+            owner_name=owner_name,
+            phone=phone,
+            email=email,
+            opt_in_future=opt_in_future,
+            sponsor_opt_in=sponsor_opt_in,
+            car_number=car_number,
+            year=year,
+            make=make,
+            model=model,
+            waiver_accepted=True,
+            waiver_signed_name=waiver_signed_name,
+            waiver_text=waiver_text,
+            waiver_version=waiver_version,
+            amount_cents=registration_fee_cents,
             waiver_template_id=waiver_template_id,
         )
     except ValueError:
@@ -985,9 +1109,24 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
-                    int(show["id"]), intent_token, owner_name, phone, email, 1 if opt_in_future else 0, 1 if sponsor_opt_in else 0,
-                    car_number, year, make, model, 1, waiver_signed_name, waiver_text, waiver_version,
-                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest(), waiver_template_id, registration_fee_cents,
+                    int(show["id"]),
+                    intent_token,
+                    owner_name,
+                    phone,
+                    email,
+                    1 if opt_in_future else 0,
+                    1 if sponsor_opt_in else 0,
+                    car_number,
+                    year,
+                    make,
+                    model,
+                    1,
+                    waiver_signed_name,
+                    waiver_text,
+                    waiver_version,
+                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest(),
+                    waiver_template_id,
+                    registration_fee_cents,
                 ),
             )
             conn.commit()
@@ -996,35 +1135,76 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             conn.close()
 
     html_path = _save_waiver_capture_html(
-        show=show, car_number=car_number, owner_name=owner_name, phone=phone, email=email,
-        year=year, make=make, model=model, opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in,
-        waiver_text=waiver_text, waiver_version=waiver_version, signed_name=waiver_signed_name,
-        intent_token=intent_token, request_path=request.path, ip_address=_client_ip(), user_agent=_user_agent(),
+        show=show,
+        car_number=car_number,
+        owner_name=owner_name,
+        phone=phone,
+        email=email,
+        year=year,
+        make=make,
+        model=model,
+        opt_in_future=opt_in_future,
+        sponsor_opt_in=sponsor_opt_in,
+        waiver_text=waiver_text,
+        waiver_version=waiver_version,
+        signed_name=waiver_signed_name,
+        intent_token=intent_token,
+        request_path=request.path,
+        ip_address=_client_ip(),
+        user_agent=_user_agent(),
     )
     _record_waiver_evidence(
-        show=show, registration_intent_id=registration_intent_id, show_car_id=int(car["id"]), car_number=car_number,
-        owner_name=owner_name, phone=phone, email=email, year=year, make=make, model=model,
-        opt_in_future=opt_in_future, sponsor_opt_in=sponsor_opt_in, waiver_text=waiver_text,
-        waiver_version=waiver_version, signed_name=waiver_signed_name, intent_token=intent_token, html_path=html_path,
+        show=show,
+        registration_intent_id=registration_intent_id,
+        show_car_id=int(car["id"]),
+        car_number=car_number,
+        owner_name=owner_name,
+        phone=phone,
+        email=email,
+        year=year,
+        make=make,
+        model=model,
+        opt_in_future=opt_in_future,
+        sponsor_opt_in=sponsor_opt_in,
+        waiver_text=waiver_text,
+        waiver_version=waiver_version,
+        signed_name=waiver_signed_name,
+        intent_token=intent_token,
+        html_path=html_path,
     )
 
     if registration_fee_cents <= 0:
         synthetic_session_id = f"free_claim_{intent_token}"
-        attach_stripe_session_to_registration_intent(registration_intent_id, synthetic_session_id, stripe_payment_intent_id="")
-        result = _finalize_placeholder_claim_paid(stripe_session_id=synthetic_session_id, show_car_id=int(car["id"]))
+        attach_stripe_session_to_registration_intent(
+            registration_intent_id,
+            synthetic_session_id,
+            stripe_payment_intent_id="",
+        )
+        result = _finalize_placeholder_claim_paid(
+            stripe_session_id=synthetic_session_id,
+            show_car_id=int(car["id"]),
+        )
         final_car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
         return render_template("placeholder_claim_success.html", show=show, car=final_car)
 
     acct = _connected_account_id(show)
     if not acct:
         return render_template("placeholder_claim.html", show=show, car=car, error="This show does not have a charity payment account connected yet. Please contact the organizer.")
+
     _require_platform_stripe()
     success_url = _abs_url(url_for("placeholder_claim_success", show_slug=show["slug"], intent_token=intent_token)) + "?session_id={CHECKOUT_SESSION_ID}"
     cancel_url = _abs_url(url_for("placeholder_claim_page", show_slug=show["slug"], car_token=car_token))
     session_obj = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": registration_fee_cents, "product_data": {"name": f"Registration – {show['title']}"}}, "quantity": 1}],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "unit_amount": registration_fee_cents,
+                "product_data": {"name": f"Registration – {show['title']}"},
+            },
+            "quantity": 1,
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
@@ -1038,16 +1218,25 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
         stripe_account=acct,
     )
     attach_stripe_session_to_registration_intent(registration_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return render_template("register_checkout.html", show=show, car={"year": year, "make": make, "model": model}, car_number=car_number, checkout_url=session_obj.url)
+    return render_template(
+        "register_checkout.html",
+        show=show,
+        car={"year": year, "make": make, "model": model},
+        car_number=car_number,
+        checkout_url=session_obj.url,
+    )
+
 
 @app.get("/claim-success/<show_slug>/<intent_token>")
 def placeholder_claim_success(show_slug: str, intent_token: str):
     show = get_show_by_slug(show_slug)
     if not show:
         return "Show not found.", 404
+
     ri = get_registration_intent_by_token(intent_token)
     if not ri or int(ri["show_id"]) != int(show["id"]):
         return "Registration not found.", 404
+
     session_id = request.args.get("session_id", "").strip()
     if ri["finalized_show_car_id"]:
         conn = _conn_direct()
@@ -1059,22 +1248,28 @@ def placeholder_claim_success(show_slug: str, intent_token: str):
             return render_template("payment_not_complete.html")
         car = get_show_car_public_by_token(int(show["id"]), sc["car_token"])
         return render_template("placeholder_claim_success.html", show=show, car=car)
+
     if not session_id:
         return render_template("payment_not_complete.html")
+
     acct = _connected_account_id(show)
     if not acct:
         return render_template("payment_not_complete.html")
+
     _require_platform_stripe()
     try:
         sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
     except Exception:
         return render_template("payment_not_complete.html")
+
     if sess.payment_status != "paid":
         return render_template("payment_not_complete.html")
+
     md = sess.metadata or {}
     show_car_id = int(md.get("show_car_id", "0") or "0")
     if not show_car_id:
         return render_template("payment_not_complete.html")
+
     result = _finalize_placeholder_claim_paid(stripe_session_id=sess.id, show_car_id=show_car_id)
     car = get_show_car_public_by_token(int(show["id"]), result["car_token"])
     return render_template("placeholder_claim_success.html", show=show, car=car)
@@ -1122,6 +1317,7 @@ def checkin_submit(show_slug: str, car_token: str):
     car_private = get_show_car_private_by_token(int(show["id"]), car_token)
     if not car_private:
         return "Car not found.", 404
+
     name = request.form.get("name", "").strip()
     phone = request.form.get("phone", "").strip()
     email = request.form.get("email", "").strip().lower()
@@ -1129,10 +1325,15 @@ def checkin_submit(show_slug: str, car_token: str):
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
+
     if not (name and phone and email and year and make and model):
         return render_template("checkin.html", show=show, car=car_private, error="Please fill out all required fields.")
+
     update_person(
-        person_id=int(car_private["person_id"]), name=name, phone=phone, email=email,
+        person_id=int(car_private["person_id"]),
+        name=name,
+        phone=phone,
+        email=email,
         opt_in_future=opt_in_future,
         sponsor_opt_in=bool(car_private["sponsor_opt_in"]) if "sponsor_opt_in" in car_private.keys() else False,
         consent_text=car_private["consent_text"] if "consent_text" in car_private.keys() else CONSENT_TEXT_CAR_OWNER,
@@ -1140,7 +1341,12 @@ def checkin_submit(show_slug: str, car_token: str):
     )
     update_show_car_details(int(car_private["id"]), year=year, make=make, model=model)
     mark_show_car_checked_in(int(car_private["id"]))
-    _log_event("checkin.completed", int(show["id"]), {"show_car_id": int(car_private["id"]), "car_number": int(car_private["car_number"])}, actor_type="public")
+    _log_event(
+        "checkin.completed",
+        int(show["id"]),
+        {"show_car_id": int(car_private["id"]), "car_number": int(car_private["car_number"])},
+        actor_type="public",
+    )
     car_private2 = get_show_car_private_by_token(int(show["id"]), car_token)
     return render_template("checkin.html", show=show, car=car_private2, success="Check-in complete. You're all set!")
 
@@ -1178,6 +1384,7 @@ def attendee_submit(show_slug: str):
     show = get_show_by_slug(show_slug)
     if not show:
         return "Show not found.", 404
+
     first_name = request.form.get("first_name", "").strip()
     last_name = request.form.get("last_name", "").strip()
     phone = request.form.get("phone", "").strip()
@@ -1185,11 +1392,24 @@ def attendee_submit(show_slug: str):
     zip_code = request.form.get("zip", "").strip()
     sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
     updates_opt_in = request.form.get("updates_opt_in", "") == "on"
+
     if not (first_name and last_name):
         return render_template("attendee.html", show=show, error="First and last name are required.")
     if (sponsor_opt_in or updates_opt_in) and not phone:
         return render_template("attendee.html", show=show, error="Phone number is required if you choose to receive updates or sponsor information.")
-    attendee_id = create_attendee(int(show["id"]), first_name, last_name, phone, email, zip_code, sponsor_opt_in, updates_opt_in, ATTENDEE_CONSENT_TEXT, ATTENDEE_CONSENT_VERSION)
+
+    attendee_id = create_attendee(
+        int(show["id"]),
+        first_name,
+        last_name,
+        phone,
+        email,
+        zip_code,
+        sponsor_opt_in,
+        updates_opt_in,
+        ATTENDEE_CONSENT_TEXT,
+        ATTENDEE_CONSENT_VERSION,
+    )
     record_field_metric(int(show["id"]), "phone", bool(phone))
     record_field_metric(int(show["id"]), "email", bool(email))
     return redirect(url_for("attendee_fee_page", show_slug=show_slug, attendee_id=attendee_id))
@@ -1217,18 +1437,22 @@ def create_attendee_fee_checkout():
     show = get_show_by_slug(show_slug)
     if not show:
         return jsonify({"ok": False, "error": "Show not found."}), 404
+
     try:
         attendee_id = int(attendee_id_raw)
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid attendee."}), 400
+
     fixed_fee_cents = int(show["attendee_fee_cents"] or 0)
     skip_fee = request.form.get("skip_fee", "").strip() == "1"
     if skip_fee or fixed_fee_cents <= 0:
         create_donation_row(int(show["id"]), attendee_id, 0, "skipped")
         return jsonify({"ok": True, "skipped": True, "redirect_url": url_for("attendee_done", show_slug=show_slug)})
+
     acct = _connected_account_id(show)
     if not acct:
         return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
+
     _require_platform_stripe()
     fee_row_id = create_donation_row(int(show["id"]), attendee_id, fixed_fee_cents, "pending")
     success_url = _abs_url(url_for("attendee_fee_success", show_slug=show_slug)) + "?session_id={CHECKOUT_SESSION_ID}"
@@ -1236,10 +1460,22 @@ def create_attendee_fee_checkout():
     session_obj = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": fixed_fee_cents, "product_data": {"name": f"Attendance Fee – {show['title']}"}}, "quantity": 1}],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "unit_amount": fixed_fee_cents,
+                "product_data": {"name": f"Attendance Fee – {show['title']}"},
+            },
+            "quantity": 1,
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata={"payment_item_type": "attendance_fee", "show_id": str(show["id"]), "show_slug": show_slug, "donation_id": str(fee_row_id)},
+        metadata={
+            "payment_item_type": "attendance_fee",
+            "show_id": str(show["id"]),
+            "show_slug": show_slug,
+            "donation_id": str(fee_row_id),
+        },
         stripe_account=acct,
     )
     attach_stripe_session_to_donation(fee_row_id, session_obj.id, stripe_payment_intent_id="")
@@ -1254,19 +1490,24 @@ def attendee_fee_success(show_slug: Optional[str] = None):
         return "Missing session_id.", 400
     if not show_slug:
         show_slug = request.args.get("show_slug", "").strip()
+
     show = get_show_by_slug(show_slug) if show_slug else get_active_show()
     if not show:
         return "Show not found.", 404
+
     acct = _connected_account_id(show)
     if not acct:
         return render_template("payment_not_complete.html")
+
     _require_platform_stripe()
     try:
         sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
     except Exception:
         return render_template("payment_not_complete.html")
+
     if sess.payment_status != "paid":
         return render_template("payment_not_complete.html")
+
     mark_donation_paid(sess.id)
     return redirect(url_for("attendee_done", show_slug=show["slug"]))
 
@@ -1286,12 +1527,27 @@ def vote_qty_page(show_slug: str, car_token: str, category_slug: str):
         return "Show not found.", 404
     if category_slug not in CATEGORY_SLUGS:
         return "Invalid category.", 404
+
     car = get_show_car_public_by_token(int(show["id"]), car_token)
     if not car:
         return "Car not found.", 404
+
     if int(show["voting_open"]) != 1:
         return render_template("voting_closed.html", show=show)
-    return render_template("vote_qty.html", show=show, car=car, category_slug=category_slug, category_name=CATEGORY_SLUGS[category_slug], vote_price_cents=int(show["vote_price_cents"] or 100))
+
+    return render_template(
+        "vote_qty.html",
+        show=show,
+        car=car,
+        category_slug=category_slug,
+        category_name=CATEGORY_SLUGS[category_slug],
+        vote_price_cents=int(show["vote_price_cents"] or 100),
+        payment_mode=_show_payment_mode(show),
+        voting_mode=_show_voting_mode(show),
+        preset_vote_options=_show_preset_vote_options(show),
+        allow_custom_votes=_show_allow_custom_votes(show),
+        max_votes_per_checkout=_show_max_votes_per_checkout(show),
+    )
 
 
 @app.post("/create-checkout-session")
@@ -1301,42 +1557,94 @@ def create_checkout_session():
     car_token = request.form.get("car_token", "").strip()
     category_slug = request.form.get("category_slug", "").strip()
     qty_raw = request.form.get("vote_qty", "1").strip()
+
     show = get_show_by_slug(show_slug)
     if not show:
         return jsonify({"ok": False, "error": "Show not found."}), 404
+
     if int(show["voting_open"]) != 1:
         return jsonify({"ok": False, "error": "Voting is currently closed."}), 403
-    acct = _connected_account_id(show)
-    if not acct:
-        return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
+
     if category_slug not in CATEGORY_SLUGS:
         return jsonify({"ok": False, "error": "Invalid category."}), 400
+
     car = get_show_car_public_by_token(int(show["id"]), car_token)
     if not car:
         return jsonify({"ok": False, "error": "Car not found."}), 404
+
     try:
         vote_qty = int(qty_raw)
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid vote quantity."}), 400
-    if vote_qty < 1 or vote_qty > 50:
-        return jsonify({"ok": False, "error": "Vote quantity must be between 1 and 50."}), 400
+
+    max_votes = _show_max_votes_per_checkout(show)
+    if vote_qty < 1 or vote_qty > max_votes:
+        return jsonify({"ok": False, "error": f"Vote quantity must be between 1 and {max_votes}."}), 400
+
     vote_price_cents = int(show["vote_price_cents"] or 100)
     amount_cents = vote_qty * vote_price_cents
+    payment_mode = _show_payment_mode(show)
+
+    if payment_mode == "external":
+        external_payment_url = (show["external_payment_url"] or "").strip() if "external_payment_url" in show.keys() else ""
+        if not external_payment_url:
+            return jsonify({"ok": False, "error": "External payment URL is not configured for this show."}), 400
+
+        return jsonify({
+            "ok": True,
+            "payment_mode": "external",
+            "checkout_url": external_payment_url,
+        })
+
+    acct = _connected_account_id(show)
+    if not acct:
+        return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
+
     _require_platform_stripe()
-    vote_intent_id = create_vote_intent(int(show["id"]), int(car["id"]), CATEGORY_SLUGS[category_slug], vote_qty, amount_cents)
+    vote_intent_id = create_vote_intent(
+        int(show["id"]),
+        int(car["id"]),
+        CATEGORY_SLUGS[category_slug],
+        vote_qty,
+        amount_cents,
+    )
+
     success_url = _abs_url(url_for("vote_success")) + "?session_id={CHECKOUT_SESSION_ID}&show_slug=" + show_slug
     cancel_url = _abs_url(url_for("vote_qty_page", show_slug=show_slug, car_token=car_token, category_slug=category_slug))
+
     session_obj = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
-        line_items=[{"price_data": {"currency": "usd", "unit_amount": vote_price_cents, "product_data": {"name": f"Vote – {CATEGORY_SLUGS[category_slug]} (Car #{car['car_number']})"}}, "quantity": vote_qty}],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "unit_amount": vote_price_cents,
+                "product_data": {
+                    "name": f"Vote – {CATEGORY_SLUGS[category_slug]} (Car #{car['car_number']})"
+                },
+            },
+            "quantity": vote_qty,
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata={"payment_item_type": "vote", "show_id": str(show["id"]), "show_slug": show_slug, "vote_intent_id": str(vote_intent_id), "show_car_id": str(car["id"]), "category": CATEGORY_SLUGS[category_slug], "vote_qty": str(vote_qty)},
+        metadata={
+            "payment_item_type": "vote",
+            "show_id": str(show["id"]),
+            "show_slug": show_slug,
+            "vote_intent_id": str(vote_intent_id),
+            "show_car_id": str(car["id"]),
+            "category": CATEGORY_SLUGS[category_slug],
+            "vote_qty": str(vote_qty),
+        },
         stripe_account=acct,
     )
+
     attach_stripe_session_to_vote_intent(vote_intent_id, session_obj.id, stripe_payment_intent_id="")
-    return jsonify({"ok": True, "checkout_url": session_obj.url})
+    return jsonify({
+        "ok": True,
+        "payment_mode": "stripe",
+        "checkout_url": session_obj.url,
+    })
 
 
 @app.get("/success")
@@ -1345,21 +1653,26 @@ def vote_success():
     show_slug = request.args.get("show_slug", "").strip()
     if not session_id:
         return "Missing session_id.", 400
+
     show = get_show_by_slug(show_slug) if show_slug else get_active_show()
     if not show:
         return "Show not found.", 404
+
     acct = _connected_account_id(show)
     if not acct:
         return render_template("payment_not_complete.html")
+
     _require_platform_stripe()
     try:
         sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
     except Exception:
         return render_template("payment_not_complete.html")
+
     if sess.payment_status != "paid":
         return render_template("payment_not_complete.html")
+
     finalize_vote_intent_paid(sess.id)
-    return render_template("vote_success.html")
+    return render_template("vote_success.html", show=show)
 
 
 @app.get("/admin")
@@ -1385,6 +1698,7 @@ def admin_page():
         registered_cars=registered_cars,
     )
 
+
 @app.post("/admin/login")
 @rate_limit("admin_login", 10, 900)
 def admin_login():
@@ -1397,6 +1711,7 @@ def admin_login():
         return redirect(next_url)
     _log_event("admin.login_failed", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
     return render_template("admin.html", show=show, authed=False, login_error="Incorrect password.", next=next_url)
+
 
 @app.post("/admin/logout")
 @require_admin
@@ -1426,16 +1741,20 @@ def admin_connect_charity_stripe_callback():
     error = request.args.get("error", "").strip()
     expected_state = session.get("stripe_connect_state")
     show_id = session.get("stripe_connect_show_id")
+
     if error:
         flash(f"Stripe connection was not completed: {error}", "error")
         _log_event("admin.stripe_connect_error", show_id, {"error": error}, actor_type="admin")
         return redirect(url_for("admin_page"))
+
     if not state or not expected_state or state != expected_state or not show_id:
         flash("Invalid Stripe Connect state. Please try again.", "error")
         return redirect(url_for("admin_page"))
+
     if not code:
         flash("Missing Stripe authorization code.", "error")
         return redirect(url_for("admin_page"))
+
     try:
         token_resp = stripe.OAuth.token(grant_type="authorization_code", code=code)
         stripe_account_id = token_resp.get("stripe_user_id", "")
@@ -1446,8 +1765,14 @@ def admin_connect_charity_stripe_callback():
         if not stripe_account_id:
             flash("Stripe did not return a connected account ID.", "error")
             return redirect(url_for("admin_page"))
-        set_show_charity_connect(int(show_id), stripe_account_id, connect_status="connected", connect_email=connect_email)
-        _log_event("admin.stripe_connected", int(show_id), {"stripe_account_id": stripe_account_id, "connect_email": connect_email}, actor_type="admin")
+
+        set_show_charity_connect(int(show_id), stripe_account_id, connect_email=connect_email)
+        _log_event(
+            "admin.stripe_connected",
+            int(show_id),
+            {"stripe_account_id": stripe_account_id, "connect_email": connect_email},
+            actor_type="admin",
+        )
         flash("Charity Stripe account connected successfully.", "ok")
         return redirect(url_for("admin_page"))
     except Exception as e:
@@ -1473,25 +1798,52 @@ def admin_show_settings():
     show = get_active_show()
     if not show:
         return "No active show.", 500
+
     show_type = (request.form.get("show_type") or "full").strip().lower()
     ov_raw = request.form.get("allow_prereg_override", "").strip()
     ov = None if ov_raw == "" else int(ov_raw) if ov_raw.isdigit() else None
     max_cars_raw = request.form.get("max_cars", "").strip()
     max_cars = None if max_cars_raw == "" else int(max_cars_raw) if max_cars_raw.isdigit() else None
-    registration_fee_cents = _parse_dollars_to_cents(request.form.get("registration_fee_dollars", ""), int(show["registration_fee_cents"] or 0))
-    attendee_fee_cents = _parse_dollars_to_cents(request.form.get("attendee_fee_dollars", ""), int(show["attendee_fee_cents"] or 0))
-    vote_price_cents = _parse_dollars_to_cents(request.form.get("vote_price_dollars", ""), int(show["vote_price_cents"] or 100))
+
+    registration_fee_cents = _parse_dollars_to_cents(
+        request.form.get("registration_fee_dollars", ""),
+        int(show["registration_fee_cents"] or 0),
+    )
+    attendee_fee_cents = _parse_dollars_to_cents(
+        request.form.get("attendee_fee_dollars", ""),
+        int(show["attendee_fee_cents"] or 0),
+    )
+    vote_price_cents = _parse_dollars_to_cents(
+        request.form.get("vote_price_dollars", ""),
+        int(show["vote_price_cents"] or 100),
+    )
     if vote_price_cents <= 0:
         vote_price_cents = 100
+
     update_show_admin_settings(
-        int(show["id"]), show_type, ov, max_cars, registration_fee_cents, attendee_fee_cents, vote_price_cents,
-        request.form.get("public_vote_disclosure", ""), request.form.get("public_registration_disclosure", ""),
-        request.form.get("public_donation_disclosure", ""),
+        int(show["id"]),
+        show_type=show_type,
+        allow_prereg_override=ov,
+        max_cars=max_cars,
+        registration_fee_cents=registration_fee_cents,
+        attendee_fee_cents=attendee_fee_cents,
+        vote_price_cents=vote_price_cents,
+        public_vote_disclosure=request.form.get("public_vote_disclosure", ""),
+        public_registration_disclosure=request.form.get("public_registration_disclosure", ""),
+        public_donation_disclosure=request.form.get("public_donation_disclosure", ""),
+        voting_mode=request.form.get("voting_mode", "fundraiser_unlimited").strip(),
+        payment_mode=request.form.get("payment_mode", "stripe").strip(),
+        external_payment_url=request.form.get("external_payment_url", "").strip(),
+        allow_custom_votes=1 if request.form.get("allow_custom_votes") else 0,
+        preset_vote_options=request.form.get("preset_vote_options", "1,5,10,20,25").strip(),
+        max_votes_per_checkout=max(
+            1,
+            int(request.form.get("max_votes_per_checkout", "50") or "50")
+        ) if (request.form.get("max_votes_per_checkout", "50") or "50").isdigit() else 50,
     )
     _log_event("admin.show_settings_saved", int(show["id"]), {"show_type": show_type, "max_cars": max_cars}, actor_type="admin")
     flash("Show settings saved.", "ok")
     return redirect(url_for("admin_page"))
-
 
 
 @app.get("/admin/shows")
@@ -1515,8 +1867,31 @@ def admin_shows_create():
         flash("Title and slug are required.", "error")
         return redirect(url_for("admin_shows"))
 
+    try:
+        sort_order = int(request.form.get("sort_order", "100") or "100")
+    except ValueError:
+        sort_order = 100
+
+    try:
+        waiver_template_id = int(request.form.get("waiver_template_id", "0") or "0") or None
+    except ValueError:
+        waiver_template_id = None
+
+    voting_mode = request.form.get("voting_mode", "fundraiser_unlimited").strip()
+    payment_mode = request.form.get("payment_mode", "stripe").strip()
+    external_payment_url = request.form.get("external_payment_url", "").strip()
+    allow_custom_votes = 1 if request.form.get("allow_custom_votes") else 0
+    preset_vote_options = request.form.get("preset_vote_options", "1,5,10,20,25").strip()
+    max_votes_per_checkout_raw = request.form.get("max_votes_per_checkout", "50").strip()
+
+    try:
+        max_votes_per_checkout = max(1, int(max_votes_per_checkout_raw))
+    except ValueError:
+        max_votes_per_checkout = 50
+
     create_show_admin(
         slug=slug,
+        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         title=title,
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
@@ -1530,11 +1905,10 @@ def admin_shows_create():
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
-        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
-        sort_order=int(request.form.get("sort_order", "100") or "100"),
+        sort_order=sort_order,
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
-        waiver_template_id=int(request.form.get("waiver_template_id", "0") or "0") or None,
+        waiver_template_id=waiver_template_id,
         organizer_name=request.form.get("organizer_name", "").strip(),
         venue_name=request.form.get("venue_name", "").strip(),
         venue_address_line1=request.form.get("venue_address_line1", "").strip(),
@@ -1544,18 +1918,48 @@ def admin_shows_create():
         venue_zip=request.form.get("venue_zip", "").strip(),
         charity_name=request.form.get("charity_name", "").strip(),
         charity_description=request.form.get("charity_description", "").strip(),
+        voting_mode=voting_mode,
+        payment_mode=payment_mode,
+        external_payment_url=external_payment_url,
+        allow_custom_votes=allow_custom_votes,
+        preset_vote_options=preset_vote_options,
+        max_votes_per_checkout=max_votes_per_checkout,
     )
 
     flash("Show created.", "ok")
     return redirect(url_for("admin_shows"))
 
+
 @app.post("/admin/shows/<int:show_id>/update")
 @require_admin
 def admin_shows_update(show_id: int):
+    try:
+        sort_order = int(request.form.get("sort_order", "100") or "100")
+    except ValueError:
+        sort_order = 100
+
+    try:
+        waiver_template_id = int(request.form.get("waiver_template_id", "0") or "0") or None
+    except ValueError:
+        waiver_template_id = None
+
+    voting_mode = request.form.get("voting_mode", "fundraiser_unlimited").strip()
+    payment_mode = request.form.get("payment_mode", "stripe").strip()
+    external_payment_url = request.form.get("external_payment_url", "").strip()
+    allow_custom_votes = 1 if request.form.get("allow_custom_votes") else 0
+    preset_vote_options = request.form.get("preset_vote_options", "1,5,10,20,25").strip()
+    max_votes_per_checkout_raw = request.form.get("max_votes_per_checkout", "50").strip()
+
+    try:
+        max_votes_per_checkout = max(1, int(max_votes_per_checkout_raw))
+    except ValueError:
+        max_votes_per_checkout = 50
+
     update_show_admin_record(
         show_id,
         slug=request.form.get("slug", "").strip(),
         title=request.form.get("title", "").strip(),
+        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
         location_name=request.form.get("location_name", "").strip(),
@@ -1568,11 +1972,10 @@ def admin_shows_update(show_id: int):
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
-        flyer_image_path=request.form.get("flyer_image_path", "").strip(),
         show_on_site=1 if request.form.get("show_on_site") == "on" else 0,
-        sort_order=int(request.form.get("sort_order", "100") or "100"),
+        sort_order=sort_order,
         hide_address=1 if request.form.get("hide_address") == "on" else 0,
-        waiver_template_id=int(request.form.get("waiver_template_id", "0") or "0") or None,
+        waiver_template_id=waiver_template_id,
         organizer_name=request.form.get("organizer_name", "").strip(),
         venue_name=request.form.get("venue_name", "").strip(),
         venue_address_line1=request.form.get("venue_address_line1", "").strip(),
@@ -1582,10 +1985,18 @@ def admin_shows_update(show_id: int):
         venue_zip=request.form.get("venue_zip", "").strip(),
         charity_name=request.form.get("charity_name", "").strip(),
         charity_description=request.form.get("charity_description", "").strip(),
+        voting_mode=voting_mode,
+        payment_mode=payment_mode,
+        external_payment_url=external_payment_url,
+        allow_custom_votes=allow_custom_votes,
+        preset_vote_options=preset_vote_options,
+        max_votes_per_checkout=max_votes_per_checkout,
     )
 
     flash("Show updated.", "ok")
-    return redirect(url_for("admin_shows"))    
+    return redirect(url_for("admin_shows"))
+
+
 @app.post("/admin/shows/<int:show_id>/set-active")
 @require_admin
 def admin_shows_set_active(show_id: int):
@@ -1608,7 +2019,6 @@ def admin_shows_set_past(show_id: int):
     set_past_show(show_id)
     flash("Show moved to past.", "ok")
     return redirect(url_for("admin_shows"))
-
 
 
 @app.get("/admin/waivers")
@@ -1709,11 +2119,11 @@ def admin_waiver_update(waiver_template_id: int):
     return redirect(url_for("admin_waivers"))
 
 
-
 @app.get("/admin/print-cards.pdf")
 @require_admin
 def admin_print_cards_pdf():
     from utils.print_cards import build_landscape_cards_pdf
+
     show = get_active_show()
     if not show:
         return "No active show.", 500
@@ -1832,6 +2242,7 @@ def admin_reset_votes():
     _log_event("admin.votes_reset", int(show["id"]), {"backup_filename": filename}, actor_type="admin")
     return send_file(io.BytesIO(zip_bytes), mimetype="application/zip", as_attachment=True, download_name=filename)
 
+
 @app.get("/admin/leads")
 @require_admin
 def admin_leads():
@@ -1866,13 +2277,19 @@ def admin_leads_export():
         download_name=filename,
     )
 
+
 @app.get("/admin/leaderboard")
 @require_admin
 def admin_leaderboard():
     show = get_active_show()
     if not show:
         return "No active show.", 500
-    return render_template("leaderboard.html", show=show, by_category=leaderboard_by_category(int(show["id"])), overall=leaderboard_overall(int(show["id"])))
+    return render_template(
+        "leaderboard.html",
+        show=show,
+        by_category=leaderboard_by_category(int(show["id"])),
+        overall=leaderboard_overall(int(show["id"])),
+    )
 
 
 @app.get("/admin/export-votes.csv")
@@ -1884,9 +2301,37 @@ def admin_export_votes():
     rows = export_votes_for_show(int(show["id"]))
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["created_at", "category", "vote_qty", "amount_cents", "stripe_session_id", "car_number", "year", "make", "model", "owner_name", "owner_phone", "owner_email", "opt_in_future"])
+    w.writerow([
+        "created_at",
+        "category",
+        "vote_qty",
+        "amount_cents",
+        "stripe_session_id",
+        "car_number",
+        "year",
+        "make",
+        "model",
+        "owner_name",
+        "owner_phone",
+        "owner_email",
+        "opt_in_future",
+    ])
     for r in rows:
-        w.writerow([r["created_at"], r["category"], r["vote_qty"], r["amount_cents"], r["stripe_session_id"], r["car_number"], r["year"], r["make"], r["model"], r["owner_name"], r["owner_phone"], r["owner_email"], r["opt_in_future"]])
+        w.writerow([
+            r["created_at"],
+            r["category"],
+            r["vote_qty"],
+            r["amount_cents"],
+            r["stripe_session_id"],
+            r["car_number"],
+            r["year"],
+            r["make"],
+            r["model"],
+            r["owner_name"],
+            r["owner_phone"],
+            r["owner_email"],
+            r["opt_in_future"],
+        ])
     _log_event("admin.votes_exported", int(show["id"]), {"row_count": len(rows)}, actor_type="admin")
     mem = io.BytesIO(buf.getvalue().encode("utf-8"))
     mem.seek(0)
@@ -1919,7 +2364,12 @@ def admin_placeholders_create():
         flash("Invalid placeholder range. Count must be 1–1000.", "error")
         return redirect(url_for("admin_placeholders"))
     created = create_placeholder_cars(int(show["id"]), start_number=start_number, count=count)
-    _log_event("admin.placeholders_created", int(show["id"]), {"start_number": start_number, "count_requested": count, "count_created": created}, actor_type="admin")
+    _log_event(
+        "admin.placeholders_created",
+        int(show["id"]),
+        {"start_number": start_number, "count_requested": count, "count_created": created},
+        actor_type="admin",
+    )
     flash(f"Created {created} placeholder cars.", "ok")
     return redirect(url_for("admin_placeholders"))
 
@@ -2023,6 +2473,7 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature", "")
     if not STRIPE_WEBHOOK_SECRET:
         return "Webhook secret not configured.", 500
+
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
@@ -2034,6 +2485,7 @@ def stripe_webhook():
     event_type = event.get("type", "")
     if event_id and has_processed_webhook_event(event_id):
         return jsonify({"ok": True, "duplicate": True})
+
     try:
         if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             obj = event["data"]["object"]
@@ -2052,6 +2504,7 @@ def stripe_webhook():
                     finalize_vote_intent_paid(session_id)
                 elif item_type == "attendance_fee":
                     mark_donation_paid(session_id)
+
         if event_id:
             mark_webhook_event_processed(event_id, event_type)
         return jsonify({"ok": True})
@@ -2062,4 +2515,3 @@ def stripe_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)
-

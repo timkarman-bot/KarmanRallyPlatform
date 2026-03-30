@@ -2,6 +2,8 @@
 {% set title = "Thank You • Karman Kar Shows & Events" %}
 
 {% block content %}
+{% set success_show = show if show is defined and show else active_show %}
+
 <div class="max-w-2xl mx-auto">
   <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8">
     <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs">
@@ -14,13 +16,13 @@
       Thank you for supporting the show and the cause.
     </p>
 
-    {% if active_show and active_show["public_vote_disclosure"] %}
+    {% if success_show and success_show["public_vote_disclosure"] %}
       <div class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Payment Notice
         </div>
         <div class="mt-1 text-sm text-slate-700 whitespace-pre-line">
-          {{ active_show["public_vote_disclosure"] }}
+          {{ success_show["public_vote_disclosure"] }}
         </div>
       </div>
     {% endif %}
@@ -30,8 +32,8 @@
         Home
       </a>
 
-      {% if active_show %}
-        <a class="btn btn-outline" href="{{ url_for('show_page', slug=active_show['slug']) }}">
+      {% if success_show %}
+        <a class="btn btn-outline" href="{{ url_for('show_page', slug=success_show['slug']) }}">
           Back to show
         </a>
       {% endif %}

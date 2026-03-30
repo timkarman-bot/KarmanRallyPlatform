@@ -19,23 +19,15 @@
     </p>
 
     <div class="mt-6 flex gap-3">
-
-      <a
-        class="btn btn-primary"
-        href="{{ url_for('home') }}"
-      >
+      <a class="btn btn-primary" href="{{ url_for('home') }}">
         Return to Home
       </a>
 
       {% if active_show %}
-      <a
-        class="btn btn-secondary"
-        href="{{ url_for('show_page', slug=active_show.slug) }}"
-      >
-        View Event Page
-      </a>
+        <a class="btn btn-secondary" href="{{ url_for('show_page', slug=active_show['slug']) }}">
+          View Event Page
+        </a>
       {% endif %}
-
     </div>
 
   </div>
