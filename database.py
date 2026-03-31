@@ -65,6 +65,7 @@ def init_db() -> None:
             time TEXT,
             location_name TEXT,
             cars_arrive_time TEXT,
+            day_of_registration_time TEXT,
             show_start_time TEXT,
             show_end_time TEXT,
             map_url TEXT,
@@ -137,8 +138,14 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN cta_label TEXT",
         "ALTER TABLE shows ADD COLUMN cta_url TEXT",
         "ALTER TABLE shows ADD COLUMN show_on_site INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE shows ADD COLUMN cars_arrive_time TEXT",
+        "ALTER TABLE shows ADD COLUMN day_of_registration_time TEXT",
+        "ALTER TABLE shows ADD COLUMN show_start_time TEXT",
+        "ALTER TABLE shows ADD COLUMN show_end_time TEXT",
+        "ALTER TABLE shows ADD COLUMN map_url TEXT",
         "ALTER TABLE shows ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE shows ADD COLUMN hide_address INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN flyer_image_path TEXT",
         "ALTER TABLE shows ADD COLUMN voting_mode TEXT NOT NULL DEFAULT 'fundraiser_unlimited'",
         "ALTER TABLE shows ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'stripe'",
         "ALTER TABLE shows ADD COLUMN external_payment_url TEXT",
@@ -151,14 +158,14 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
-    for sql in [
-        "ALTER TABLE waiver_templates ADD COLUMN preset_key TEXT NOT NULL DEFAULT 'standard'",
-        "ALTER TABLE waiver_templates ADD COLUMN builder_config TEXT",
-    ]:
-        try:
-            cur.execute(sql)
-        except sqlite3.OperationalError:
-            pass
+    try:
+        cur.execute("ALTER TABLE waiver_templates ADD COLUMN preset_key TEXT NOT NULL DEFAULT 'standard'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE waiver_templates ADD COLUMN builder_config TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute(
         """
@@ -247,7 +254,6 @@ def init_db() -> None:
             waiver_text TEXT,
             waiver_version TEXT,
             waiver_text_sha256 TEXT,
-            waiver_template_id INTEGER,
             amount_cents INTEGER NOT NULL DEFAULT 0,
             payment_status TEXT NOT NULL DEFAULT 'pending',
             stripe_session_id TEXT UNIQUE,
@@ -473,24 +479,6 @@ def init_db() -> None:
 
     cur.execute(
         """
-        CREATE TABLE IF NOT EXISTS upcoming_event (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            title TEXT,
-            event_date TEXT,
-            event_time TEXT,
-            location_name TEXT,
-            address TEXT,
-            description TEXT,
-            cta_label TEXT,
-            cta_url TEXT,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-        """
-    )
-
-    cur.execute(
-        """
         CREATE TABLE IF NOT EXISTS event_interest_signups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             show_id INTEGER,
@@ -545,6 +533,8 @@ def init_db() -> None:
     conn.close()
 
 
+# SHOWS
+
 def ensure_default_show(default_show: Dict[str, Any]) -> None:
     conn = _conn()
     cur = conn.cursor()
@@ -594,404 +584,6 @@ def get_active_show() -> Optional[sqlite3.Row]:
     row = conn.execute("SELECT * FROM shows WHERE is_active = 1 LIMIT 1").fetchone()
     conn.close()
     return row
-
-
-def get_show_by_id(show_id: int) -> Optional[sqlite3.Row]:
-    conn = _conn()
-    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
-    conn.close()
-    return row
-
-
-def get_show_by_slug(slug: str) -> Optional[sqlite3.Row]:
-    conn = _conn()
-    row = conn.execute("SELECT * FROM shows WHERE slug = ? LIMIT 1", (slug,)).fetchone()
-    conn.close()
-    return row
-
-
-def export_show_row(show_id: int) -> Optional[sqlite3.Row]:
-    conn = _conn()
-    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
-    conn.close()
-    return row
-
-
-def count_registered_cars(show_id: int) -> int:
-    conn = _conn()
-    row = conn.execute("SELECT COUNT(*) AS cnt FROM show_cars WHERE show_id = ?", (show_id,)).fetchone()
-    conn.close()
-    return int(row["cnt"] or 0)
-
-
-def show_has_capacity(show_id: int) -> bool:
-    show = export_show_row(show_id)
-    if not show:
-        return False
-    max_cars = show["max_cars"] if "max_cars" in show.keys() else None
-    if max_cars is None:
-        return True
-    try:
-        max_cars = int(max_cars)
-    except Exception:
-        return True
-    if max_cars <= 0:
-        return True
-    return count_registered_cars(show_id) < max_cars
-
-
-def set_show_voting_open(show_id: int, voting_open: bool) -> None:
-    conn = _conn()
-    conn.execute("UPDATE shows SET voting_open = ? WHERE id = ?", (_b(voting_open), show_id))
-    conn.commit()
-    conn.close()
-
-
-def toggle_show_voting(show_id: int) -> None:
-    conn = _conn()
-    conn.execute(
-        "UPDATE shows SET voting_open = CASE voting_open WHEN 1 THEN 0 ELSE 1 END WHERE id = ?",
-        (show_id,),
-    )
-    conn.commit()
-    conn.close()
-
-
-def set_active_show(show_id: int) -> None:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE shows SET is_active = 0")
-    cur.execute("UPDATE shows SET is_active = 1, status = 'active' WHERE id = ?", (int(show_id),))
-    conn.commit()
-    conn.close()
-
-
-def set_upcoming_show(show_id: int) -> None:
-    conn = _conn()
-    conn.execute("UPDATE shows SET status = 'upcoming', is_active = 0 WHERE id = ?", (int(show_id),))
-    conn.commit()
-    conn.close()
-
-
-def set_past_show(show_id: int) -> None:
-    conn = _conn()
-    conn.execute("UPDATE shows SET status = 'past', is_active = 0 WHERE id = ?", (int(show_id),))
-    conn.commit()
-    conn.close()
-
-
-def list_shows_admin() -> List[sqlite3.Row]:
-    conn = _conn()
-    rows = conn.execute(
-        """
-        SELECT *
-        FROM shows
-        ORDER BY
-            CASE status
-                WHEN 'active' THEN 0
-                WHEN 'upcoming' THEN 1
-                WHEN 'draft' THEN 2
-                WHEN 'past' THEN 3
-                ELSE 4
-            END,
-            sort_order ASC,
-            date ASC,
-            id DESC
-        """
-    ).fetchall()
-    conn.close()
-    return rows
-
-
-def get_next_upcoming_show() -> Optional[sqlite3.Row]:
-    conn = _conn()
-    row = conn.execute(
-        """
-        SELECT *
-        FROM shows
-        WHERE status = 'upcoming' AND show_on_site = 1
-        ORDER BY sort_order ASC, date ASC, id ASC
-        LIMIT 1
-        """
-    ).fetchone()
-    conn.close()
-    return row
-
-
-def update_show_admin_settings(show_id: int, **kwargs: Any) -> None:
-    if not kwargs:
-        return
-
-    allowed = {
-        "title",
-        "date",
-        "time",
-        "location_name",
-        "address",
-        "benefiting",
-        "suggested_donation",
-        "description",
-        "show_type",
-        "allow_prereg_override",
-        "max_cars",
-        "use_single_processor",
-        "single_processor_target",
-        "voting_processor_target",
-        "registration_processor_target",
-        "donation_processor_target",
-        "karman_processor_label",
-        "charity_processor_label",
-        "karman_stripe_secret_key",
-        "charity_stripe_secret_key",
-        "public_vote_disclosure",
-        "public_registration_disclosure",
-        "public_donation_disclosure",
-        "registration_fee_cents",
-        "attendee_fee_cents",
-        "vote_price_cents",
-        "waiver_text",
-        "waiver_version",
-        "voting_mode",
-        "payment_mode",
-        "external_payment_url",
-        "allow_custom_votes",
-        "preset_vote_options",
-        "max_votes_per_checkout",
-    }
-
-    updates = {k: v for k, v in kwargs.items() if k in allowed}
-    if not updates:
-        return
-
-    parts = [f"{k} = ?" for k in updates.keys()]
-    values = list(updates.values())
-    values.append(int(show_id))
-
-    conn = _conn()
-    conn.execute(f"UPDATE shows SET {', '.join(parts)} WHERE id = ?", values)
-    conn.commit()
-    conn.close()
-
-
-def set_show_charity_connect(show_id: int, stripe_account_id: str, connect_email: str = "") -> None:
-    conn = _conn()
-    conn.execute(
-        """
-        UPDATE shows
-        SET charity_stripe_account_id = ?,
-            charity_connect_status = 'connected',
-            charity_connect_email = ?,
-            charity_connected_at = datetime('now')
-        WHERE id = ?
-        """,
-        ((stripe_account_id or "").strip(), (connect_email or "").strip(), show_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def clear_show_charity_connect(show_id: int) -> None:
-    conn = _conn()
-    conn.execute(
-        """
-        UPDATE shows
-        SET charity_stripe_account_id = NULL,
-            charity_connect_status = 'not_connected',
-            charity_connect_email = NULL,
-            charity_connected_at = NULL
-        WHERE id = ?
-        """,
-        (show_id,),
-    )
-    conn.commit()
-    conn.close()
-
-
-def create_show_admin(
-    *,
-    slug: str,
-    flyer_image_path: str,
-    title: str,
-    date: str,
-    time: str,
-    location_name: str,
-    address: str,
-    benefiting: str,
-    suggested_donation: str,
-    description: str,
-    status: str,
-    short_details: str,
-    qr_message: str,
-    cta_label: str,
-    cta_url: str,
-    show_on_site: int,
-    sort_order: int,
-    hide_address: int = 0,
-    waiver_template_id: Optional[int] = None,
-    organizer_name: str = "",
-    venue_name: str = "",
-    venue_address_line1: str = "",
-    venue_address_line2: str = "",
-    venue_city: str = "",
-    venue_state: str = "",
-    venue_zip: str = "",
-    charity_name: str = "",
-    charity_description: str = "",
-    voting_mode: str = "fundraiser_unlimited",
-    payment_mode: str = "stripe",
-    external_payment_url: str = "",
-    allow_custom_votes: int = 1,
-    preset_vote_options: str = "1,5,10,20,25",
-    max_votes_per_checkout: int = 50,
-) -> int:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO shows (
-            slug, flyer_image_path, title, date, time, location_name, address, benefiting,
-            suggested_donation, description, status, short_details, qr_message,
-            cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
-            waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
-            venue_city, venue_state, venue_zip, charity_name, charity_description,
-            voting_mode, payment_mode, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            slug.strip(),
-            (flyer_image_path or "").strip(),
-            title.strip(),
-            (date or "").strip(),
-            (time or "").strip(),
-            (location_name or "").strip(),
-            (address or "").strip(),
-            (benefiting or "").strip(),
-            (suggested_donation or "").strip(),
-            (description or "").strip(),
-            (status or "draft").strip(),
-            (short_details or "").strip(),
-            (qr_message or "").strip(),
-            (cta_label or "").strip(),
-            (cta_url or "").strip(),
-            int(show_on_site),
-            int(sort_order),
-            int(hide_address),
-            waiver_template_id,
-            (organizer_name or "").strip(),
-            (venue_name or "").strip(),
-            (venue_address_line1 or "").strip(),
-            (venue_address_line2 or "").strip(),
-            (venue_city or "").strip(),
-            (venue_state or "").strip(),
-            (venue_zip or "").strip(),
-            (charity_name or "").strip(),
-            (charity_description or "").strip(),
-            (voting_mode or "fundraiser_unlimited").strip(),
-            (payment_mode or "stripe").strip(),
-            (external_payment_url or "").strip(),
-            int(allow_custom_votes),
-            (preset_vote_options or "1,5,10,20,25").strip(),
-            int(max_votes_per_checkout or 50),
-        ),
-    )
-    conn.commit()
-    rid = int(cur.lastrowid)
-    conn.close()
-    return rid
-
-
-def update_show_admin_record(
-    show_id: int,
-    *,
-    slug: str,
-    title: str,
-    flyer_image_path: str,
-    date: str,
-    time: str,
-    location_name: str,
-    address: str,
-    benefiting: str,
-    suggested_donation: str,
-    description: str,
-    status: str,
-    short_details: str,
-    qr_message: str,
-    cta_label: str,
-    cta_url: str,
-    show_on_site: int,
-    sort_order: int,
-    hide_address: int = 0,
-    waiver_template_id: Optional[int] = None,
-    organizer_name: str = "",
-    venue_name: str = "",
-    venue_address_line1: str = "",
-    venue_address_line2: str = "",
-    venue_city: str = "",
-    venue_state: str = "",
-    venue_zip: str = "",
-    charity_name: str = "",
-    charity_description: str = "",
-    voting_mode: str = "fundraiser_unlimited",
-    payment_mode: str = "stripe",
-    external_payment_url: str = "",
-    allow_custom_votes: int = 1,
-    preset_vote_options: str = "1,5,10,20,25",
-    max_votes_per_checkout: int = 50,
-) -> None:
-    conn = _conn()
-    conn.execute(
-        """
-        UPDATE shows
-        SET slug = ?, title = ?, flyer_image_path = ?, date = ?, time = ?, location_name = ?, address = ?,
-            benefiting = ?, suggested_donation = ?, description = ?, status = ?,
-            short_details = ?, qr_message = ?, cta_label = ?, cta_url = ?,
-            show_on_site = ?, sort_order = ?, hide_address = ?, waiver_template_id = ?,
-            organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
-            venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?,
-            voting_mode = ?, payment_mode = ?, external_payment_url = ?, allow_custom_votes = ?, preset_vote_options = ?, max_votes_per_checkout = ?
-        WHERE id = ?
-        """,
-        (
-            slug.strip(),
-            title.strip(),
-            (flyer_image_path or "").strip(),
-            (date or "").strip(),
-            (time or "").strip(),
-            (location_name or "").strip(),
-            (address or "").strip(),
-            (benefiting or "").strip(),
-            (suggested_donation or "").strip(),
-            (description or "").strip(),
-            (status or "draft").strip(),
-            (short_details or "").strip(),
-            (qr_message or "").strip(),
-            (cta_label or "").strip(),
-            (cta_url or "").strip(),
-            int(show_on_site),
-            int(sort_order),
-            int(hide_address),
-            waiver_template_id,
-            (organizer_name or "").strip(),
-            (venue_name or "").strip(),
-            (venue_address_line1 or "").strip(),
-            (venue_address_line2 or "").strip(),
-            (venue_city or "").strip(),
-            (venue_state or "").strip(),
-            (venue_zip or "").strip(),
-            (charity_name or "").strip(),
-            (charity_description or "").strip(),
-            (voting_mode or "fundraiser_unlimited").strip(),
-            (payment_mode or "stripe").strip(),
-            (external_payment_url or "").strip(),
-            int(allow_custom_votes),
-            (preset_vote_options or "1,5,10,20,25").strip(),
-            int(max_votes_per_checkout or 50),
-            int(show_id),
-        ),
-    )
-    conn.commit()
-    conn.close()
 
 
 def get_waiver_template_by_id(waiver_template_id: int) -> Optional[sqlite3.Row]:
@@ -1091,15 +683,454 @@ def update_waiver_template(
     conn.close()
 
 
-def create_person(
-    name: str,
-    phone: str,
-    email: str,
-    opt_in_future: bool,
-    sponsor_opt_in: bool,
-    consent_text: str,
-    consent_version: str,
+def get_show_by_id(show_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_show_by_slug(slug: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE slug = ? LIMIT 1", (slug,)).fetchone()
+    conn.close()
+    return row
+
+
+def list_shows_admin() -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM shows
+        ORDER BY
+            CASE status
+                WHEN 'active' THEN 0
+                WHEN 'upcoming' THEN 1
+                WHEN 'draft' THEN 2
+                WHEN 'past' THEN 3
+                ELSE 4
+            END,
+            sort_order ASC,
+            date ASC,
+            id DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_next_upcoming_show() -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM shows
+        WHERE status = 'upcoming' AND show_on_site = 1
+        ORDER BY sort_order ASC, date ASC, id ASC
+        LIMIT 1
+        """
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def create_show_admin(
+    *,
+    slug: str,
+    flyer_image_path: str,
+    title: str,
+    date: str,
+    time: str,
+    cars_arrive_time: str = "",
+    day_of_registration_time: str = "",
+    show_start_time: str = "",
+    show_end_time: str = "",
+    location_name: str,
+    address: str,
+    benefiting: str,
+    suggested_donation: str,
+    description: str,
+    status: str,
+    short_details: str,
+    qr_message: str,
+    cta_label: str,
+    cta_url: str,
+    show_on_site: int,
+    sort_order: int,
+    hide_address: int = 0,
+    waiver_template_id: Optional[int] = None,
+    organizer_name: str = "",
+    venue_name: str = "",
+    venue_address_line1: str = "",
+    venue_address_line2: str = "",
+    venue_city: str = "",
+    venue_state: str = "",
+    venue_zip: str = "",
+    charity_name: str = "",
+    charity_description: str = "",
+    voting_mode: str = "fundraiser_unlimited",
+    payment_mode: str = "stripe",
+    external_payment_url: str = "",
+    allow_custom_votes: int = 1,
+    preset_vote_options: str = "1,5,10,20,25",
+    max_votes_per_checkout: int = 50,
 ) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO shows (
+            slug, flyer_image_path, title, date, time, cars_arrive_time, day_of_registration_time,
+            show_start_time, show_end_time, location_name, address, benefiting,
+            suggested_donation, description, status, short_details, qr_message,
+            cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
+            waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
+            venue_city, venue_state, venue_zip, charity_name, charity_description,
+            voting_mode, payment_mode, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            slug.strip(),
+            (flyer_image_path or "").strip(),
+            title.strip(),
+            (date or "").strip(),
+            (time or "").strip(),
+            (cars_arrive_time or "").strip(),
+            (day_of_registration_time or "").strip(),
+            (show_start_time or "").strip(),
+            (show_end_time or "").strip(),
+            (location_name or "").strip(),
+            (address or "").strip(),
+            (benefiting or "").strip(),
+            (suggested_donation or "").strip(),
+            (description or "").strip(),
+            (status or "draft").strip(),
+            (short_details or "").strip(),
+            (qr_message or "").strip(),
+            (cta_label or "").strip(),
+            (cta_url or "").strip(),
+            int(show_on_site),
+            int(sort_order),
+            int(hide_address),
+            waiver_template_id,
+            (organizer_name or "").strip(),
+            (venue_name or "").strip(),
+            (venue_address_line1 or "").strip(),
+            (venue_address_line2 or "").strip(),
+            (venue_city or "").strip(),
+            (venue_state or "").strip(),
+            (venue_zip or "").strip(),
+            (charity_name or "").strip(),
+            (charity_description or "").strip(),
+            (voting_mode or "fundraiser_unlimited").strip(),
+            (payment_mode or "stripe").strip(),
+            (external_payment_url or "").strip(),
+            int(allow_custom_votes),
+            (preset_vote_options or "1,5,10,20,25").strip(),
+            int(max_votes_per_checkout or 50),
+        ),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
+
+
+def update_show_admin_record(
+    show_id: int,
+    *,
+    slug: str,
+    title: str,
+    flyer_image_path: str,
+    date: str,
+    time: str,
+    cars_arrive_time: str = "",
+    day_of_registration_time: str = "",
+    show_start_time: str = "",
+    show_end_time: str = "",
+    location_name: str,
+    address: str,
+    benefiting: str,
+    suggested_donation: str,
+    description: str,
+    status: str,
+    short_details: str,
+    qr_message: str,
+    cta_label: str,
+    cta_url: str,
+    show_on_site: int,
+    sort_order: int,
+    hide_address: int = 0,
+    waiver_template_id: Optional[int] = None,
+    organizer_name: str = "",
+    venue_name: str = "",
+    venue_address_line1: str = "",
+    venue_address_line2: str = "",
+    venue_city: str = "",
+    venue_state: str = "",
+    venue_zip: str = "",
+    charity_name: str = "",
+    charity_description: str = "",
+    voting_mode: str = "fundraiser_unlimited",
+    payment_mode: str = "stripe",
+    external_payment_url: str = "",
+    allow_custom_votes: int = 1,
+    preset_vote_options: str = "1,5,10,20,25",
+    max_votes_per_checkout: int = 50,
+) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET slug = ?, title = ?, flyer_image_path = ?, date = ?, time = ?,
+            cars_arrive_time = ?, day_of_registration_time = ?, show_start_time = ?, show_end_time = ?,
+            location_name = ?, address = ?, benefiting = ?, suggested_donation = ?, description = ?, status = ?,
+            short_details = ?, qr_message = ?, cta_label = ?, cta_url = ?,
+            show_on_site = ?, sort_order = ?, hide_address = ?, waiver_template_id = ?,
+            organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
+            venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?,
+            voting_mode = ?, payment_mode = ?, external_payment_url = ?, allow_custom_votes = ?,
+            preset_vote_options = ?, max_votes_per_checkout = ?
+        WHERE id = ?
+        """,
+        (
+            slug.strip(),
+            title.strip(),
+            (flyer_image_path or "").strip(),
+            (date or "").strip(),
+            (time or "").strip(),
+            (cars_arrive_time or "").strip(),
+            (day_of_registration_time or "").strip(),
+            (show_start_time or "").strip(),
+            (show_end_time or "").strip(),
+            (location_name or "").strip(),
+            (address or "").strip(),
+            (benefiting or "").strip(),
+            (suggested_donation or "").strip(),
+            (description or "").strip(),
+            (status or "draft").strip(),
+            (short_details or "").strip(),
+            (qr_message or "").strip(),
+            (cta_label or "").strip(),
+            (cta_url or "").strip(),
+            int(show_on_site),
+            int(sort_order),
+            int(hide_address),
+            waiver_template_id,
+            (organizer_name or "").strip(),
+            (venue_name or "").strip(),
+            (venue_address_line1 or "").strip(),
+            (venue_address_line2 or "").strip(),
+            (venue_city or "").strip(),
+            (venue_state or "").strip(),
+            (venue_zip or "").strip(),
+            (charity_name or "").strip(),
+            (charity_description or "").strip(),
+            (voting_mode or "fundraiser_unlimited").strip(),
+            (payment_mode or "stripe").strip(),
+            (external_payment_url or "").strip(),
+            int(allow_custom_votes),
+            (preset_vote_options or "1,5,10,20,25").strip(),
+            int(max_votes_per_checkout or 50),
+            int(show_id),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_active_show(show_id: int) -> None:
+    conn = _conn()
+    conn.execute("UPDATE shows SET is_active = 0 WHERE is_active = 1")
+    conn.execute("UPDATE shows SET is_active = 1, status = 'active' WHERE id = ?", (show_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_upcoming_show(show_id: int) -> None:
+    conn = _conn()
+    conn.execute("UPDATE shows SET status = 'upcoming', show_on_site = 1 WHERE id = ?", (show_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_past_show(show_id: int) -> None:
+    conn = _conn()
+    conn.execute("UPDATE shows SET status = 'past', is_active = 0 WHERE id = ?", (show_id,))
+    conn.commit()
+    conn.close()
+
+
+def export_show_row(show_id: int):
+    conn = _conn()
+    row = conn.execute("SELECT * FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def count_registered_cars(show_id: int) -> int:
+    conn = _conn()
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM show_cars WHERE show_id = ?", (show_id,)).fetchone()
+    conn.close()
+    return int(row["cnt"] or 0)
+
+
+def show_has_capacity(show_id: int) -> bool:
+    show = export_show_row(show_id)
+    if not show:
+        return False
+    max_cars = show["max_cars"] if "max_cars" in show.keys() else None
+    if max_cars is None:
+        return True
+    try:
+        max_cars = int(max_cars)
+    except Exception:
+        return True
+    if max_cars <= 0:
+        return True
+    return count_registered_cars(show_id) < max_cars
+
+
+def set_show_voting_open(show_id: int, voting_open: bool) -> None:
+    conn = _conn()
+    conn.execute("UPDATE shows SET voting_open = ? WHERE id = ?", (_b(voting_open), show_id))
+    conn.commit()
+    conn.close()
+
+
+def toggle_show_voting(show_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE shows SET voting_open = CASE voting_open WHEN 1 THEN 0 ELSE 1 END WHERE id = ?",
+        (show_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_show_admin_settings(
+    show_id: int,
+    show_type: str,
+    allow_prereg_override: Optional[int],
+    max_cars: Optional[int],
+    registration_fee_cents: int,
+    attendee_fee_cents: int,
+    vote_price_cents: int,
+    public_vote_disclosure: str,
+    public_registration_disclosure: str,
+    public_donation_disclosure: str,
+    waiver_text: str = "",
+    waiver_version: str = "",
+) -> None:
+    st = (show_type or "full").strip().lower()
+    if st not in ("popup", "full"):
+        st = "full"
+
+    if allow_prereg_override is not None:
+        try:
+            allow_prereg_override = int(allow_prereg_override)
+        except Exception:
+            allow_prereg_override = None
+        if allow_prereg_override not in (0, 1):
+            allow_prereg_override = None
+
+    if max_cars is not None:
+        try:
+            max_cars = int(max_cars)
+            if max_cars <= 0:
+                max_cars = None
+        except Exception:
+            max_cars = None
+
+    try:
+        registration_fee_cents = max(0, int(registration_fee_cents))
+    except Exception:
+        registration_fee_cents = 0
+    try:
+        attendee_fee_cents = max(0, int(attendee_fee_cents))
+    except Exception:
+        attendee_fee_cents = 0
+    try:
+        vote_price_cents = max(1, int(vote_price_cents))
+    except Exception:
+        vote_price_cents = 100
+
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET show_type = ?,
+            allow_prereg_override = ?,
+            max_cars = ?,
+            registration_fee_cents = ?,
+            attendee_fee_cents = ?,
+            vote_price_cents = ?,
+            public_vote_disclosure = ?,
+            public_registration_disclosure = ?,
+            public_donation_disclosure = ?,
+            waiver_text = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_text END,
+            waiver_version = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_version END
+        WHERE id = ?
+        """,
+        (
+            st,
+            allow_prereg_override,
+            max_cars,
+            registration_fee_cents,
+            attendee_fee_cents,
+            vote_price_cents,
+            (public_vote_disclosure or "").strip(),
+            (public_registration_disclosure or "").strip(),
+            (public_donation_disclosure or "").strip(),
+            (waiver_text or "").strip(),
+            (waiver_text or "").strip(),
+            (waiver_version or "").strip(),
+            (waiver_version or "").strip(),
+            show_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_show_charity_connect(show_id: int, stripe_account_id: str, connect_status: str = "connected", connect_email: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET charity_stripe_account_id = ?,
+            charity_connect_status = ?,
+            charity_connect_email = ?,
+            charity_connected_at = datetime('now')
+        WHERE id = ?
+        """,
+        ((stripe_account_id or "").strip(), (connect_status or "connected").strip(), (connect_email or "").strip(), show_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_show_charity_connect(show_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET charity_stripe_account_id = NULL,
+            charity_connect_status = 'not_connected',
+            charity_connect_email = NULL
+        WHERE id = ?
+        """,
+        (show_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+# REGISTRATION / PEOPLE
+
+def create_person(name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> int:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
@@ -1115,16 +1146,7 @@ def create_person(
     return pid
 
 
-def update_person(
-    person_id: int,
-    name: str,
-    phone: str,
-    email: str,
-    opt_in_future: bool,
-    sponsor_opt_in: bool,
-    consent_text: str,
-    consent_version: str,
-) -> None:
+def update_person(person_id: int, name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> None:
     conn = _conn()
     conn.execute(
         """
@@ -1141,7 +1163,6 @@ def update_person(
 def create_show_car(show_id: int, person_id: int, car_number: int, year: str, make: str, model: str) -> Tuple[int, str]:
     conn = _conn()
     cur = conn.cursor()
-
     show = cur.execute("SELECT max_cars FROM shows WHERE id = ? LIMIT 1", (show_id,)).fetchone()
     if show and show["max_cars"] is not None:
         try:
@@ -1280,6 +1301,8 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
     conn.close()
     return rows
 
+
+# REGISTRATION INTENTS
 
 def create_registration_intent(
     show_id: int,
@@ -1440,11 +1463,11 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
             INSERT INTO show_cars (
                 show_id, person_id, car_number, car_token, year, make, model,
                 registration_payment_status, registration_amount_cents, registration_session_id,
-                waiver_signed_name, waiver_signed_at, waiver_version,
+                waiver_signed_name, waiver_signed_at, waiver_version, waiver_text, waiver_text_sha256, waiver_template_id,
                 waiver_received, waiver_received_at, waiver_received_by,
-                is_placeholder, registration_state, waiver_template_id, waiver_text, waiver_text_sha256
+                is_placeholder, registration_state
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 1, datetime('now'), 'electronic', 0, 'paid', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 1, datetime('now'), 'electronic', 0, 'paid')
             """,
             (
                 show_id,
@@ -1459,9 +1482,9 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                 stripe_session_id,
                 ri["waiver_signed_name"],
                 ri["waiver_version"],
-                ri["waiver_template_id"],
                 ri["waiver_text"],
                 ri["waiver_text_sha256"],
+                ri["waiver_template_id"] if "waiver_template_id" in ri.keys() else None,
             ),
         )
         show_car_id = int(cur.lastrowid)
@@ -1484,6 +1507,8 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
     finally:
         conn.close()
 
+
+# PLACEHOLDER CARS
 
 def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
     conn = _conn()
@@ -1526,6 +1551,8 @@ def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
     conn.close()
     return created
 
+
+# VOTING
 
 def create_vote_intent(show_id: int, show_car_id: int, category: str, vote_qty: int, amount_cents: int) -> int:
     conn = _conn()
@@ -1669,6 +1696,8 @@ def leaderboard_overall(show_id: int) -> List[Tuple[int, int]]:
     return [(int(r["car_number"]), int(r["total_votes"] or 0)) for r in rows]
 
 
+# SPONSORS
+
 def upsert_sponsor(name: str, logo_path: str = "", website_url: str = "") -> int:
     conn = _conn()
     cur = conn.cursor()
@@ -1753,18 +1782,9 @@ def get_show_sponsors(show_id: int):
     return title, sponsors
 
 
-def create_attendee(
-    show_id: int,
-    first_name: str,
-    last_name: str,
-    phone: str,
-    email: str,
-    zip_code: str,
-    sponsor_opt_in: bool,
-    updates_opt_in: bool,
-    consent_text: str,
-    consent_version: str,
-) -> int:
+# ATTENDEES + DONATIONS + METRICS
+
+def create_attendee(show_id: int, first_name: str, last_name: str, phone: str, email: str, zip_code: str, sponsor_opt_in: bool, updates_opt_in: bool, consent_text: str, consent_version: str) -> int:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
@@ -1831,6 +1851,8 @@ def mark_donation_paid(stripe_session_id: str) -> None:
     conn.commit()
     conn.close()
 
+
+# WAIVER TRACKING / AUDIT / RATE LIMITING
 
 def waiver_mark_received(show_id: int, show_car_id: int, received_by: str) -> None:
     conn = _conn()
@@ -1984,63 +2006,100 @@ def mark_webhook_event_processed(stripe_event_id: str, event_type: str) -> None:
         conn.close()
 
 
-def get_upcoming_event() -> Optional[sqlite3.Row]:
-    conn = _conn()
-    row = conn.execute(
-        """
-        SELECT *
-        FROM upcoming_event
-        WHERE id = 1 AND is_active = 1
-        LIMIT 1
-        """
-    ).fetchone()
-    conn.close()
-    return row
+# UPCOMING EVENT / INTEREST SIGNUPS
+
+def get_upcoming_event() -> Optional[Dict[str, Any]]:
+    row = get_next_upcoming_show()
+    if not row:
+        return None
+
+    return {
+        "heading": "Upcoming show",
+        "title": row["title"] or "",
+        "display_date": row["date"] or "",
+        "visible": 1 if int(row["show_on_site"] or 0) == 1 else 0,
+        "intro": row["description"] or "Check the newsletter QR code for the latest details on our next show or pop-up event.",
+        "details": row["short_details"] or "",
+        "qr_message": row["qr_message"] or "",
+    }
 
 
 def save_upcoming_event(
+    *,
+    heading: str,
     title: str,
-    event_date: str,
-    event_time: str,
-    location_name: str,
-    address: str,
-    description: str,
-    cta_label: str = "",
-    cta_url: str = "",
-    is_active: bool = True,
+    display_date: str,
+    visible: int,
+    intro: str,
+    details: str,
+    qr_message: str,
 ) -> None:
     conn = _conn()
-    conn.execute(
+    cur = conn.cursor()
+
+    row = cur.execute(
         """
-        INSERT INTO upcoming_event (
-            id, title, event_date, event_time, location_name, address,
-            description, cta_label, cta_url, is_active, updated_at
+        SELECT *
+        FROM shows
+        WHERE status = 'upcoming'
+        ORDER BY sort_order ASC, id ASC
+        LIMIT 1
+        """
+    ).fetchone()
+
+    slug = _slugify(title or "upcoming-show")
+
+    if row:
+        cur.execute(
+            """
+            UPDATE shows
+            SET title = ?,
+                date = ?,
+                description = ?,
+                short_details = ?,
+                qr_message = ?,
+                show_on_site = ?,
+                sort_order = 0,
+                hide_address = 0,
+                status = 'upcoming'
+            WHERE id = ?
+            """,
+            (
+                (title or "").strip(),
+                (display_date or "").strip(),
+                (intro or "").strip(),
+                (details or "").strip(),
+                (qr_message or "").strip(),
+                int(visible),
+                int(row["id"]),
+            ),
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            event_date = excluded.event_date,
-            event_time = excluded.event_time,
-            location_name = excluded.location_name,
-            address = excluded.address,
-            description = excluded.description,
-            cta_label = excluded.cta_label,
-            cta_url = excluded.cta_url,
-            is_active = excluded.is_active,
-            updated_at = datetime('now')
-        """,
-        (
-            (title or "").strip(),
-            (event_date or "").strip(),
-            (event_time or "").strip(),
-            (location_name or "").strip(),
-            (address or "").strip(),
-            (description or "").strip(),
-            (cta_label or "").strip(),
-            (cta_url or "").strip(),
-            _b(is_active),
-        ),
-    )
+    else:
+        candidate_slug = slug
+        n = 2
+        while cur.execute("SELECT 1 FROM shows WHERE slug = ? LIMIT 1", (candidate_slug,)).fetchone():
+            candidate_slug = f"{slug}-{n}"
+            n += 1
+
+        cur.execute(
+            """
+            INSERT INTO shows (
+                slug, title, date, description, short_details, qr_message,
+                status, show_on_site, sort_order, hide_address, voting_open, is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'upcoming', ?, 0, 0, 0, 0)
+            """,
+            (
+                candidate_slug,
+                (title or "").strip(),
+                (display_date or "").strip(),
+                (intro or "").strip(),
+                (details or "").strip(),
+                (qr_message or "").strip(),
+                int(visible),
+            ),
+        )
+
     conn.commit()
     conn.close()
 
@@ -2056,8 +2115,13 @@ def create_event_interest_signup(
     wants_text: bool,
     source: str = "",
 ) -> int:
+    if show_id is None:
+        row = get_next_upcoming_show()
+        show_id = int(row["id"]) if row else None
+
     conn = _conn()
     cur = conn.cursor()
+
     cur.execute(
         """
         INSERT INTO event_interest_signups (
@@ -2077,6 +2141,7 @@ def create_event_interest_signup(
             (source or "").strip(),
         ),
     )
+
     conn.commit()
     rid = int(cur.lastrowid)
     conn.close()
@@ -2088,7 +2153,10 @@ def list_event_interest_signups(show_id: Optional[int] = None) -> List[sqlite3.R
     if show_id is None:
         rows = conn.execute(
             """
-            SELECT eis.*, s.title AS show_title
+            SELECT
+                eis.*,
+                s.title AS show_title,
+                s.slug AS show_slug
             FROM event_interest_signups eis
             LEFT JOIN shows s ON s.id = eis.show_id
             ORDER BY eis.created_at DESC, eis.id DESC
@@ -2097,13 +2165,16 @@ def list_event_interest_signups(show_id: Optional[int] = None) -> List[sqlite3.R
     else:
         rows = conn.execute(
             """
-            SELECT eis.*, s.title AS show_title
+            SELECT
+                eis.*,
+                s.title AS show_title,
+                s.slug AS show_slug
             FROM event_interest_signups eis
             LEFT JOIN shows s ON s.id = eis.show_id
             WHERE eis.show_id = ?
             ORDER BY eis.created_at DESC, eis.id DESC
             """,
-            (int(show_id),),
+            (show_id,),
         ).fetchall()
     conn.close()
     return rows
@@ -2114,9 +2185,10 @@ def export_event_interest_signups_csv(show_id: Optional[int] = None) -> bytes:
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([
-        "id",
+        "created_at",
         "show_id",
         "show_title",
+        "show_slug",
         "first_name",
         "last_name",
         "email",
@@ -2124,13 +2196,13 @@ def export_event_interest_signups_csv(show_id: Optional[int] = None) -> bytes:
         "wants_email",
         "wants_text",
         "source",
-        "created_at",
     ])
     for r in rows:
         w.writerow([
-            r["id"],
+            r["created_at"],
             r["show_id"],
             r["show_title"],
+            r["show_slug"],
             r["first_name"],
             r["last_name"],
             r["email"],
@@ -2138,10 +2210,11 @@ def export_event_interest_signups_csv(show_id: Optional[int] = None) -> bytes:
             r["wants_email"],
             r["wants_text"],
             r["source"],
-            r["created_at"],
         ])
     return buf.getvalue().encode("utf-8")
 
+
+# SNAPSHOT EXPORT
 
 def export_people_rows_for_show(show_id: int) -> List[sqlite3.Row]:
     conn = _conn()
@@ -2204,47 +2277,52 @@ def export_donations_for_show(show_id: int) -> List[sqlite3.Row]:
     return rows
 
 
-def build_snapshot_zip_bytes(show_id: int):
+def export_waiver_evidence_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute("SELECT * FROM waiver_evidence WHERE show_id = ? ORDER BY created_at ASC", (show_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def export_audit_logs_for_show(show_id: int) -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute("SELECT * FROM audit_logs WHERE show_id = ? ORDER BY created_at ASC", (show_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def _rows_to_csv_bytes(rows: List[sqlite3.Row]) -> bytes:
+    buf = io.StringIO()
+    if not rows:
+        return b""
+    headers = list(rows[0].keys())
+    w = csv.writer(buf)
+    w.writerow(headers)
+    for r in rows:
+        w.writerow([r[h] for h in headers])
+    return buf.getvalue().encode("utf-8")
+
+
+def build_snapshot_zip_bytes(show_id: int) -> Tuple[bytes, str]:
     show = export_show_row(show_id)
     if not show:
-        raise ValueError("Show not found")
+        raise ValueError("Show not found.")
 
-    cars = export_show_cars_rows(show_id)
-    people = export_people_rows_for_show(show_id)
-    votes = export_votes_for_show(show_id)
-    registration_intents = export_registration_intents_for_show(show_id)
-    vote_intents = export_vote_intents_for_show(show_id)
-    donations = export_donations_for_show(show_id)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    slug = (show["slug"] or f"show-{show_id}").strip()
+    filename = f"{slug}-snapshot-{stamp}.zip"
 
-    slug = show["slug"]
-    ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    zip_name = f"{slug}-snapshot-{ts}Z.zip"
     mem = io.BytesIO()
-
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        show_buf = io.StringIO()
-        sw = csv.writer(show_buf)
-        cols = list(show.keys())
-        sw.writerow(cols)
-        sw.writerow([show[c] for c in cols])
-        z.writestr("show.csv", show_buf.getvalue().encode("utf-8"))
-
-        def write_rows(filename: str, rows_local: List[sqlite3.Row]) -> None:
-            buf = io.StringIO()
-            w = csv.writer(buf)
-            if rows_local:
-                cols_local = list(rows_local[0].keys())
-                w.writerow(cols_local)
-                for r in rows_local:
-                    w.writerow([r[c] for c in cols_local])
-            z.writestr(filename, buf.getvalue().encode("utf-8"))
-
-        write_rows("cars.csv", cars)
-        write_rows("people.csv", people)
-        write_rows("votes.csv", votes)
-        write_rows("registration_intents.csv", registration_intents)
-        write_rows("vote_intents.csv", vote_intents)
-        write_rows("donations.csv", donations)
+    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("show.csv", _rows_to_csv_bytes([show]))
+        zf.writestr("people.csv", _rows_to_csv_bytes(export_people_rows_for_show(show_id)))
+        zf.writestr("show_cars.csv", _rows_to_csv_bytes(export_show_cars_rows(show_id)))
+        zf.writestr("registration_intents.csv", _rows_to_csv_bytes(export_registration_intents_for_show(show_id)))
+        zf.writestr("votes.csv", _rows_to_csv_bytes(export_votes_for_show(show_id)))
+        zf.writestr("vote_intents.csv", _rows_to_csv_bytes(export_vote_intents_for_show(show_id)))
+        zf.writestr("donations.csv", _rows_to_csv_bytes(export_donations_for_show(show_id)))
+        zf.writestr("waiver_evidence.csv", _rows_to_csv_bytes(export_waiver_evidence_for_show(show_id)))
+        zf.writestr("audit_logs.csv", _rows_to_csv_bytes(export_audit_logs_for_show(show_id)))
 
     mem.seek(0)
-    return mem.getvalue(), zip_name
+    return mem.getvalue(), filename

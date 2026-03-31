@@ -53,8 +53,8 @@
   {% endif %}
 
   {% if show["suggested_donation"] %}
-    <div><span class="font-semibold">Suggested donation:</span> {{ show["suggested_donation"] }}</div>
-  {% endif %}
+<div><span class="font-semibold">Admission fee:</span> {{ show["suggested_donation"] }}</div>
+{% endif %}
 </div>
 
       {% if show["short_details"] %}
@@ -69,7 +69,10 @@
         {% else %}
           <div class="px-4 py-2 rounded-2xl border border-slate-200 bg-slate-50 text-slate-700">
             No pre-registration for this show — register on-site via QR check-in.
-          </div>
+      </div>
+          <div class="mt-4 text-sm text-slate-600">
+            Admission and registration fees apply. Voting is optional and treated as a charitable donation supporting the event cause.
+</div>
         {% endif %}
         <a class="btn btn-outline" href="{{ url_for('events') }}">Upcoming events</a>
       </div>
@@ -93,7 +96,7 @@
           {% if show["voting_open"] == 1 %}Open{% else %}Closed{% endif %}
         </div>
         <p class="mt-2 text-sm text-slate-600">
-          Voting is handled by QR code at the event and payment is processed through the configured charity checkout.
+          Voting is handled by QR code at the event and donations are processed through the configured charity checkout.
         </p>
       </div>
     </div>

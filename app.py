@@ -1923,20 +1923,24 @@ def admin_shows_create():
         max_votes_per_checkout = 50
 
     flyer_image_path = request.form.get("flyer_image_path", "").strip()
-flyer_file = request.files.get("flyer_image")
+    flyer_file = request.files.get("flyer_image")
+    if flyer_file and flyer_file.filename:
+        try:
+            flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
+        except ValueError as e:
+            flash(str(e), "error")
+            return redirect(url_for("admin_shows"))
 
-if flyer_file and flyer_file.filename:
-    try:
-        flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
-    except ValueError as e:
-        flash(str(e), "error")
-        return redirect(url_for("admin_shows"))
-
-create_show_admin(
-    slug=slug,
-    flyer_image_path=flyer_image_path,        title=title,
+    create_show_admin(
+        slug=slug,
+        flyer_image_path=flyer_image_path,
+        title=title,
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
+        cars_arrive_time=request.form.get("cars_arrive_time", "").strip(),
+        day_of_registration_time=request.form.get("day_of_registration_time", "").strip(),
+        show_start_time=request.form.get("show_start_time", "").strip(),
+        show_end_time=request.form.get("show_end_time", "").strip(),
         location_name=request.form.get("location_name", "").strip(),
         address=request.form.get("address", "").strip(),
         benefiting=request.form.get("benefiting", "").strip(),
@@ -1997,25 +2001,27 @@ def admin_shows_update(show_id: int):
     except ValueError:
         max_votes_per_checkout = 50
 
+    slug = request.form.get("slug", "").strip()
+    flyer_image_path = request.form.get("flyer_image_path", "").strip()
+    flyer_file = request.files.get("flyer_image")
+    if flyer_file and flyer_file.filename:
+        try:
+            flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
+        except ValueError as e:
+            flash(str(e), "error")
+            return redirect(url_for("admin_shows"))
+
     update_show_admin_record(
         show_id,
-        slug=request.form.get("slug", "").strip(),
+        slug=slug,
         title=request.form.get("title", "").strip(),
-        flyer_image_path = request.form.get("flyer_image_path", "").strip()
-flyer_file = request.files.get("flyer_image")
-
-if flyer_file and flyer_file.filename:
-    try:
-        flyer_image_path = _save_uploaded_flyer(flyer_file, slug)
-    except ValueError as e:
-        flash(str(e), "error")
-        return redirect(url_for("admin_shows"))
-
-create_show_admin(
-    slug=slug,
-    flyer_image_path=flyer_image_path,flyer_image_path=request.form.get("flyer_image_path", "").strip(),
+        flyer_image_path=flyer_image_path,
         date=request.form.get("date", "").strip(),
         time=request.form.get("time", "").strip(),
+        cars_arrive_time=request.form.get("cars_arrive_time", "").strip(),
+        day_of_registration_time=request.form.get("day_of_registration_time", "").strip(),
+        show_start_time=request.form.get("show_start_time", "").strip(),
+        show_end_time=request.form.get("show_end_time", "").strip(),
         location_name=request.form.get("location_name", "").strip(),
         address=request.form.get("address", "").strip(),
         benefiting=request.form.get("benefiting", "").strip(),
@@ -2048,10 +2054,7 @@ create_show_admin(
     )
 
     flash("Show updated.", "ok")
-    return redirect(url_for("admin_shows"))
-
-
-@app.post("/admin/shows/<int:show_id>/set-active")
+    return redirect(url_for("admin_shows"))@app.post("/admin/shows/<int:show_id>/set-active")
 @require_admin
 def admin_shows_set_active(show_id: int):
     set_active_show(show_id)

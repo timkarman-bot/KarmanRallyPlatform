@@ -2,114 +2,401 @@
 {% set title = "Manage Shows • Karman Kar Shows & Events" %}
 
 {% block content %}
-<div class="max-w-6xl mx-auto">
+<div class="max-w-6xl mx-auto space-y-8">
 
-  <h1 class="text-3xl font-semibold mb-6">Manage Shows</h1>
+  <div>
+    <h1 class="text-3xl font-semibold">Manage Shows</h1>
+    <p class="mt-2 text-slate-600">
+      Create new shows, update existing shows, upload flyers, and manage timing details.
+    </p>
+  </div>
 
-  {% for s in shows %}
-  <form method="POST" enctype="multipart/form-data" class="mb-8 rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-
-    <input type="hidden" name="show_id" value="{{ s['id'] }}">
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-      <!-- BASIC INFO -->
+  <!-- CREATE NEW SHOW -->
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex items-center justify-between gap-4 mb-6">
       <div>
-        <label class="block text-sm font-medium">Title</label>
-        <input name="title" value="{{ s['title'] }}" class="input">
+        <h2 class="text-xl font-semibold">Create New Show</h2>
+        <p class="text-sm text-slate-500">Add a new show to the system.</p>
+      </div>
+    </div>
+
+    <form
+      method="POST"
+      action="{{ url_for('admin_shows_create') }}"
+      enctype="multipart/form-data"
+      class="grid grid-cols-1 md:grid-cols-2 gap-6"
+    >
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
+        <input name="title" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required>
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Slug</label>
-        <input name="slug" value="{{ s['slug'] }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
+        <input name="slug" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required>
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Date</label>
-        <input name="date" value="{{ s['date'] }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Date</label>
+        <input name="date" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">General Time (optional)</label>
-        <input name="time" value="{{ s['time'] }}" class="input">
-      </div>
-
-      <!-- NEW TIMING FIELDS -->
-      <div>
-        <label class="block text-sm font-medium">Cars Arrival Time</label>
-        <input name="cars_arrive_time" value="{{ s['cars_arrive_time'] or '' }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">General Time</label>
+        <input name="time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Day-of Registration Window</label>
-        <input name="day_of_registration_time" value="{{ s['day_of_registration_time'] or '' }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Cars Arrival Time</label>
+        <input name="cars_arrive_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Show Start Time</label>
-        <input name="show_start_time" value="{{ s['show_start_time'] or '' }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Show Start Time</label>
+        <input name="show_start_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Show End Time</label>
-        <input name="show_end_time" value="{{ s['show_end_time'] or '' }}" class="input">
-      </div>
-
-      <!-- LOCATION -->
-      <div>
-        <label class="block text-sm font-medium">Location Name</label>
-        <input name="location_name" value="{{ s['location_name'] }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Show End Time</label>
+        <input name="show_end_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Address</label>
-        <input name="address" value="{{ s['address'] }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Location Name</label>
+        <input name="location_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
-      <!-- FLYER -->
       <div class="md:col-span-2">
-        <label class="block text-sm font-medium mb-1">Flyer Image</label>
-
-        {% if s['flyer_image_path'] %}
-          <img src="{{ s['flyer_image_path'] }}" class="mb-3 rounded-xl max-h-48">
-        {% endif %}
-
-        <input type="file" name="flyer_image" accept=".jpg,.jpeg,.png,.webp">
-        <input type="hidden" name="existing_flyer" value="{{ s['flyer_image_path'] }}">
-      </div>
-
-      <!-- VOTING -->
-      <div>
-        <label class="block text-sm font-medium">Vote Price (cents)</label>
-        <input name="vote_price_cents" value="{{ s['vote_price_cents'] or 100 }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Address</label>
+        <input name="address" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
       <div>
-        <label class="block text-sm font-medium">Max Votes Per Checkout</label>
-        <input name="max_votes_per_checkout" value="{{ s['max_votes_per_checkout'] or 50 }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Benefiting</label>
+        <input name="benefiting" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
-      <!-- PAYMENT -->
       <div>
-        <label class="block text-sm font-medium">Payment Mode</label>
-        <select name="payment_mode" class="input">
-          <option value="stripe" {% if s['payment_mode']=="stripe" %}selected{% endif %}>Stripe</option>
-          <option value="external" {% if s['payment_mode']=="external" %}selected{% endif %}>External</option>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Admission Fee</label>
+        <input name="suggested_donation" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
+        <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <option value="draft">Draft</option>
+          <option value="upcoming">Upcoming</option>
+          <option value="active">Active</option>
+          <option value="past">Past</option>
         </select>
       </div>
 
       <div>
-        <label class="block text-sm font-medium">External Payment URL</label>
-        <input name="external_payment_url" value="{{ s['external_payment_url'] or '' }}" class="input">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Sort Order</label>
+        <input name="sort_order" value="100" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
+        <textarea name="description" rows="4" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Short Details</label>
+        <textarea name="short_details" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">QR Message</label>
+        <input name="qr_message" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">CTA Label</label>
+        <input name="cta_label" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">CTA URL</label>
+        <input name="cta_url" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Organizer Name</label>
+        <input name="organizer_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Name</label>
+        <input name="venue_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 1</label>
+        <input name="venue_address_line1" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 2</label>
+        <input name="venue_address_line2" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue City</label>
+        <input name="venue_city" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue State</label>
+        <input name="venue_state" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue ZIP</label>
+        <input name="venue_zip" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Name</label>
+        <input name="charity_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Description</label>
+        <textarea name="charity_description" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="show_on_site" checked>
+          Show on site
+        </label>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="hide_address">
+          Hide address
+        </label>
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Flyer Image</label>
+        <input type="hidden" name="flyer_image_path" value="">
+        <input type="file" name="flyer_image" accept=".jpg,.jpeg,.png,.webp">
+      </div>
+
+      <div class="md:col-span-2">
+        <button type="submit" class="btn btn-primary">Create Show</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- EDIT EXISTING SHOWS -->
+  {% for s in shows %}
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <div>
+        <h2 class="text-xl font-semibold">{{ s["title"] }}</h2>
+        <p class="text-sm text-slate-500">
+          Slug: {{ s["slug"] }} • Status: {{ s["status"] or "draft" }}
+          {% if s["is_active"] == 1 %}• Active{% endif %}
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}">
+          <button type="submit" class="btn btn-outline">Set Active</button>
+        </form>
+        <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s['id']) }}">
+          <button type="submit" class="btn btn-outline">Set Upcoming</button>
+        </form>
+        <form method="POST" action="{{ url_for('admin_shows_set_past', show_id=s['id']) }}">
+          <button type="submit" class="btn btn-outline">Set Past</button>
+        </form>
+      </div>
     </div>
 
-    <div class="mt-6">
-      <button class="btn btn-primary">Save Show</button>
-    </div>
+    <form
+      method="POST"
+      action="{{ url_for('admin_shows_update', show_id=s['id']) }}"
+      enctype="multipart/form-data"
+      class="grid grid-cols-1 md:grid-cols-2 gap-6"
+    >
+      <input type="hidden" name="show_id" value="{{ s['id'] }}">
 
-  </form>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
+        <input name="title" value="{{ s['title'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
+        <input name="slug" value="{{ s['slug'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Date</label>
+        <input name="date" value="{{ s['date'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">General Time</label>
+        <input name="time" value="{{ s['time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Cars Arrival Time</label>
+        <input name="cars_arrive_time" value="{{ s['cars_arrive_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Show Start Time</label>
+        <input name="show_start_time" value="{{ s['show_start_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Show End Time</label>
+        <input name="show_end_time" value="{{ s['show_end_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Location Name</label>
+        <input name="location_name" value="{{ s['location_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Address</label>
+        <input name="address" value="{{ s['address'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Benefiting</label>
+        <input name="benefiting" value="{{ s['benefiting'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Admission Fee</label>
+        <input name="suggested_donation" value="{{ s['suggested_donation'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      <div class="mt-1 text-xs text-slate-500">
+       This is the event admission fee. Voting donations are handled separately.
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
+        <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+          <option value="draft" {% if (s['status'] or '') == 'draft' %}selected{% endif %}>Draft</option>
+          <option value="upcoming" {% if (s['status'] or '') == 'upcoming' %}selected{% endif %}>Upcoming</option>
+          <option value="active" {% if (s['status'] or '') == 'active' %}selected{% endif %}>Active</option>
+          <option value="past" {% if (s['status'] or '') == 'past' %}selected{% endif %}>Past</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Sort Order</label>
+        <input name="sort_order" value="{{ s['sort_order'] or 100 }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
+        <textarea name="description" rows="4" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['description'] or '' }}</textarea>
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Short Details</label>
+        <textarea name="short_details" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['short_details'] or '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">QR Message</label>
+        <input name="qr_message" value="{{ s['qr_message'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">CTA Label</label>
+        <input name="cta_label" value="{{ s['cta_label'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">CTA URL</label>
+        <input name="cta_url" value="{{ s['cta_url'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Organizer Name</label>
+        <input name="organizer_name" value="{{ s['organizer_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Name</label>
+        <input name="venue_name" value="{{ s['venue_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 1</label>
+        <input name="venue_address_line1" value="{{ s['venue_address_line1'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 2</label>
+        <input name="venue_address_line2" value="{{ s['venue_address_line2'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue City</label>
+        <input name="venue_city" value="{{ s['venue_city'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue State</label>
+        <input name="venue_state" value="{{ s['venue_state'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Venue ZIP</label>
+        <input name="venue_zip" value="{{ s['venue_zip'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Name</label>
+        <input name="charity_name" value="{{ s['charity_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Description</label>
+        <textarea name="charity_description" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['charity_description'] or '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="show_on_site" {% if s['show_on_site'] == 1 %}checked{% endif %}>
+          Show on site
+        </label>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="hide_address" {% if s['hide_address'] == 1 %}checked{% endif %}>
+          Hide address
+        </label>
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Flyer Image</label>
+
+        {% if s['flyer_image_path'] %}
+          <img src="{{ s['flyer_image_path'] }}" alt="{{ s['title'] }} flyer" class="mb-3 rounded-2xl border border-slate-200 max-h-56">
+        {% endif %}
+
+        <input type="hidden" name="flyer_image_path" value="{{ s['flyer_image_path'] or '' }}">
+        <input type="file" name="flyer_image" accept=".jpg,.jpeg,.png,.webp">
+      </div>
+
+      <div class="md:col-span-2">
+        <button type="submit" class="btn btn-primary">Save Show</button>
+      </div>
+    </form>
+  </section>
   {% endfor %}
 
 </div>

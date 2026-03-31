@@ -39,7 +39,7 @@
     {% if show["public_vote_disclosure"] %}
       <div class="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
         <div class="text-xs font-semibold uppercase tracking-wide text-amber-800">
-          Voting Disclosure
+          Donation Notice
         </div>
         <div class="mt-1 text-sm text-amber-900 whitespace-pre-line">
           {{ show["public_vote_disclosure"] }}
@@ -54,7 +54,10 @@
         ${{ '%.2f'|format((vote_price_cents or 100) / 100) }} per vote
         • Max {{ max_votes_per_checkout }} per checkout
       </div>
-
+         
+      <div class="text-xs text-slate-500">
+       All votes are charitable donations supporting the event cause.
+      </div>
       {% if payment_mode == "external" %}
         <div class="mt-2 text-sm text-slate-600">
           Payment will be completed through the configured charity checkout.
@@ -77,6 +80,10 @@
           >
             {{ n }}
           </button>
+          
+          <div class="mt-4 text-sm text-slate-600">
+            Admission and registration fees apply. Voting is optional and treated as a charitable donation supporting the event cause.
+          </div>
         {% endfor %}
       </div>
 
