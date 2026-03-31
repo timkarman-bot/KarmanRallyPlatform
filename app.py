@@ -2054,10 +2054,14 @@ def admin_shows_update(show_id: int):
     )
 
     flash("Show updated.", "ok")
-    return redirect(url_for("admin_shows"))@app.post("/admin/shows/<int:show_id>/set-active")
+    return redirect(url_for("admin_shows"))
+
+
+@app.post("/admin/shows/<int:show_id>/set-active")
 @require_admin
 def admin_shows_set_active(show_id: int):
     set_active_show(show_id)
+    _log_event("admin.show_set_active", show_id, actor_type="admin")
     flash("Show set as active.", "ok")
     return redirect(url_for("admin_shows"))
 
@@ -2066,6 +2070,7 @@ def admin_shows_set_active(show_id: int):
 @require_admin
 def admin_shows_set_upcoming(show_id: int):
     set_upcoming_show(show_id)
+    _log_event("admin.show_set_upcoming", show_id, actor_type="admin")
     flash("Show set as upcoming.", "ok")
     return redirect(url_for("admin_shows"))
 
@@ -2074,6 +2079,7 @@ def admin_shows_set_upcoming(show_id: int):
 @require_admin
 def admin_shows_set_past(show_id: int):
     set_past_show(show_id)
+    _log_event("admin.show_set_past", show_id, actor_type="admin")
     flash("Show moved to past.", "ok")
     return redirect(url_for("admin_shows"))
 
