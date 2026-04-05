@@ -1867,7 +1867,9 @@ def sponsorship_public_submit():
             notes=request.form.get("notes", "").strip(),
         )
 
-        return redirect(session_obj.url)    email_subject = f"Sponsorship {payment_method_choice} request – {request.form.get('sponsor_business_name', '').strip()}"
+        return redirect(session_obj.url)
+
+    email_subject = f"Sponsorship {payment_method_choice} request – {request.form.get('sponsor_business_name', '').strip()}"
     email_body = (
         f"Show: {show['title']}\n"
         f"Sponsor business: {request.form.get('sponsor_business_name', '').strip()}\n"
@@ -1898,8 +1900,8 @@ def sponsorship_public_submit():
         flash("Thank you. Your sponsorship request has been received. An invoice will be sent to the email provided within 1 business day.", "ok")
     else:
         flash("Thank you. Your sponsorship has been recorded as a check / salesperson-collected sale and our team has been notified.", "ok")
-    return redirect(url_for("sponsorship.public_sponsorship_page", show_slug=show_slug))
 
+    return redirect(url_for("sponsorship.public_sponsorship_page", show_slug=show_slug))
 
 @app.get("/sponsorship/checkout-success/<int:sale_id>")
 def sponsorship_checkout_success(sale_id: int):
