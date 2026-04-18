@@ -221,6 +221,12 @@ ATTENDEE_CONSENT_TEXT = (
 )
 ATTENDEE_CONSENT_VERSION = "2026-03-11"
 
+DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
+    "Vote payments are processed through the event payment system. "
+    "A portion of each vote payment supports the named charity, "
+    "and votes are counted after payment verification."
+)
+
 
 def prereg_allowed(show) -> bool:
     if not show:
@@ -1796,7 +1802,6 @@ def create_checkout_session():
         "checkout_url": session_obj.url,
     })
 
-@app.get("/vote/external/<int:vote_intent_id>")
 def external_vote_payment_page(vote_intent_id: int):
     vote_intent = get_vote_intent(vote_intent_id)
     if not vote_intent:
@@ -1840,22 +1845,7 @@ def external_vote_mark_submitted(vote_intent_id: int):
     if not vote_intent:
         return "Vote request not found.", 404
 
-    conn = _conn_direct()
-    try:
-        conn.execute(
-            """
-            UPDATE vote_intents
-            SET payment_status = 'pending_review'
-            WHERE id = ?
-            """,
-            (int(vote_intent_id),),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return redirect(url_for("vote_success", pending=1))
-
+return redirect(url_for("vote_success", pending=1))
 
 @app.get("/success")
 def vote_success():
@@ -2155,20 +2145,11 @@ def admin_command_center():
 
     q = request.args.get("q", "").strip()
     search_results = search_show_cars_admin(int(show["id"]), q) if q else []
-    cars = list_show_cars_public(int(show["id"])) or []
+    cars = list_show_cars_public(int(show["id"]))
 
-    registered_paid = [
-        c for c in cars
-        if ("registration_payment_status" in c.keys() and (c["registration_payment_status"] or "") == "paid")
-    ]
-    placeholders = [
-        c for c in cars
-        if ("is_placeholder" in c.keys() and int(c["is_placeholder"] or 0) == 1)
-    ]
-    checked_in = [
-        c for c in cars
-        if ("checked_in_at" in c.keys() and c["checked_in_at"])
-    ]
+    registered_paid = [c for c in cars if (c["registration_payment_status"] or "") == "paid"]
+    placeholders = [c for c in cars if int(c["is_placeholder"] or 0) == 1]
+    checked_in = [c for c in cars if c["checked_in_at"]]
 
     return render_template(
         "admin_command_center.html",
@@ -2180,52 +2161,6 @@ def admin_command_center():
         placeholders=placeholders,
         checked_in=checked_in,
     )
-    
-@app.get("/admin/vote-reviews")
-@require_admin
-def admin_vote_reviews():
-    show = get_active_show()
-    if not show:
-        return "No active show.", 500
-
-    rows = list_pending_vote_reviews(int(show["id"]))
-    return render_template("admin_vote_reviews.html", show=show, rows=rows)
-
-
-@app.post("/admin/vote-reviews/<int:vote_intent_id>/approve")
-@require_admin
-def admin_vote_review_approve(vote_intent_id: int):
-    show = get_active_show()
-    try:
-        result = finalize_external_vote_intent(vote_intent_id)
-        _log_event(
-            "admin.vote_review.approved",
-            int(show["id"]) if show else None,
-            {"vote_intent_id": vote_intent_id, "already_finalized": bool(result.get("already_finalized"))},
-            actor_type="admin",
-        )
-        flash("Vote approved.", "ok")
-    except Exception as e:
-        flash(f"Could not approve vote: {e}", "error")
-    return redirect(url_for("admin_vote_reviews"))
-
-
-@app.post("/admin/vote-reviews/<int:vote_intent_id>/reject")
-@require_admin
-def admin_vote_review_reject(vote_intent_id: int):
-    show = get_active_show()
-    try:
-        reject_external_vote_intent(vote_intent_id)
-        _log_event(
-            "admin.vote_review.rejected",
-            int(show["id"]) if show else None,
-            {"vote_intent_id": vote_intent_id},
-            actor_type="admin",
-        )
-        flash("Vote rejected.", "ok")
-    except Exception as e:
-        flash(f"Could not reject vote: {e}", "error")
-    return redirect(url_for("admin_vote_reviews"))
     
 @app.post("/admin/login")
 @rate_limit("admin_login", 10, 900)
@@ -2356,7 +2291,7 @@ def admin_show_settings():
         registration_fee_cents=registration_fee_cents,
         attendee_fee_cents=attendee_fee_cents,
         vote_price_cents=vote_price_cents,
-        public_vote_disclosure=request.form.get("public_vote_disclosure", ""),
+        public_vote_disclosure=request.form.get("public_vote_disclosure", "").strip() or DEFAULT_PUBLIC_VOTE_DISCLOSURE,
         public_registration_disclosure=request.form.get("public_registration_disclosure", ""),
         public_donation_disclosure=request.form.get("public_donation_disclosure", ""),
         voting_mode=request.form.get("voting_mode", "fundraiser_unlimited").strip(),
@@ -2443,6 +2378,7 @@ def admin_shows_create():
         description=request.form.get("description", "").strip(),
         status=request.form.get("status", "draft").strip(),
         short_details=request.form.get("short_details", "").strip(),
+        public_vote_disclosure=request.form.get("public_vote_disclosure", "").strip() or DEFAULT_PUBLIC_VOTE_DISCLOSURE,
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
@@ -2524,6 +2460,7 @@ def admin_shows_update(show_id: int):
         description=request.form.get("description", "").strip(),
         status=request.form.get("status", "draft").strip(),
         short_details=request.form.get("short_details", "").strip(),
+        public_vote_disclosure=request.form.get("public_vote_disclosure", "").strip() or DEFAULT_PUBLIC_VOTE_DISCLOSURE,
         qr_message=request.form.get("qr_message", "").strip(),
         cta_label=request.form.get("cta_label", "").strip(),
         cta_url=request.form.get("cta_url", "").strip(),
