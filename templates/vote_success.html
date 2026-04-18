@@ -3,17 +3,28 @@
 
 {% block content %}
 {% set success_show = show if show is defined and show else active_show %}
+{% set pending_mode = request.args.get("pending") == "1" %}
 
 <div class="max-w-2xl mx-auto">
   <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8">
-    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs">
-      Success
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full {% if pending_mode %}bg-amber-600{% else %}bg-emerald-600{% endif %} text-white text-xs">
+      {% if pending_mode %}Pending Review{% else %}Success{% endif %}
     </div>
 
-    <h1 class="mt-4 text-3xl font-semibold tracking-tight">Votes recorded</h1>
+    <h1 class="mt-4 text-3xl font-semibold tracking-tight">
+      {% if pending_mode %}
+        Vote submitted for review
+      {% else %}
+        Votes recorded
+      {% endif %}
+    </h1>
 
     <p class="mt-3 text-slate-600">
-      Thank you for supporting the show and the cause.
+      {% if pending_mode %}
+        Thank you for supporting the show and the cause. Your vote will count after payment review.
+      {% else %}
+        Thank you for supporting the show and the cause.
+      {% endif %}
     </p>
 
     {% if success_show and success_show["public_vote_disclosure"] %}
@@ -28,10 +39,7 @@
     {% endif %}
 
     <div class="mt-6 flex flex-wrap gap-3">
-      <a class="btn btn-primary" href="{{ url_for('home') }}">
-        Home
-      </a>
-
+      <a class="btn btn-primary" href="{{ url_for('home') }}">Home</a>
       {% if success_show %}
         <a class="btn btn-outline" href="{{ url_for('show_page', slug=success_show['slug']) }}">
           Back to show

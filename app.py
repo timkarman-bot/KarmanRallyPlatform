@@ -106,6 +106,10 @@ from database import (
     get_effective_waiver_template_for_show,
     get_next_available_car_number,
     search_show_cars_admin,
+    get_vote_intent,
+    finalize_external_vote_intent,
+    list_pending_vote_reviews,
+    reject_external_vote_intent,
 )
 
 
@@ -286,6 +290,29 @@ def _show_preset_vote_options(show: Any) -> list[int]:
             if n > 0 and n not in out:
                 out.append(n)
     return out or [1, 5, 10, 20, 25]
+    
+def _show_external_payment_label(show: Any) -> str:
+    if not show:
+        return "Charity payment"
+    try:
+        value = (show["charity_processor_label"] or "").strip()
+    except Exception:
+        value = ""
+    return value or "Charity payment"
+
+
+def _show_external_payment_url(show: Any) -> str:
+    if not show:
+        return ""
+    try:
+        return (show["external_payment_url"] or "").strip()
+    except Exception:
+        return ""
+
+
+def _show_external_payment_notice(show: Any) -> str:
+    label = _show_external_payment_label(show)
+    return f"Payment will be completed through {label}. Votes will count after review."    
 
 def _flyer_upload_dir() -> Path:
     p = Path("/data/uploads/flyers") if os.path.isdir("/data") else Path(app.instance_path) / "uploads" / "flyers"
@@ -1691,16 +1718,34 @@ def create_checkout_session():
     payment_mode = _show_payment_mode(show)
 
     if payment_mode == "external":
-        external_payment_url = (show["external_payment_url"] or "").strip() if "external_payment_url" in show.keys() else ""
+        external_payment_url = _show_external_payment_url(show)
         if not external_payment_url:
-            return jsonify({"ok": False, "error": "External payment URL is not configured for this show."}), 400
+            return jsonify({"ok": False, "error": "External payment link is not configured for this show."}), 400
+
+        vote_intent_id = create_vote_intent(
+            int(show["id"]),
+            int(car["id"]),
+            CATEGORY_SLUGS[category_slug],
+            vote_qty,
+            amount_cents,
+        )
+
+        conn = _conn_direct()
+        try:
+            conn.execute(
+                "UPDATE vote_intents SET payment_status = 'pending_review' WHERE id = ?",
+                (int(vote_intent_id),),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
         return jsonify({
             "ok": True,
             "payment_mode": "external",
-            "checkout_url": external_payment_url,
+            "redirect_url": url_for("external_vote_payment_page", vote_intent_id=vote_intent_id),
         })
-
+        
     acct = _connected_account_id(show)
     if not acct:
         return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
@@ -1751,14 +1796,79 @@ def create_checkout_session():
         "checkout_url": session_obj.url,
     })
 
+@app.get("/vote/external/<int:vote_intent_id>")
+def external_vote_payment_page(vote_intent_id: int):
+    vote_intent = get_vote_intent(vote_intent_id)
+    if not vote_intent:
+        return "Vote request not found.", 404
+
+    show = get_show_by_slug(get_active_show()["slug"]) if get_active_show() else None
+    if not show or int(show["id"]) != int(vote_intent["show_id"]):
+        show = get_active_show()
+
+    car = None
+    if show:
+        conn = _conn_direct()
+        try:
+            car = conn.execute(
+                """
+                SELECT sc.*, p.name AS owner_name
+                FROM show_cars sc
+                JOIN people p ON p.id = sc.person_id
+                WHERE sc.id = ?
+                LIMIT 1
+                """,
+                (int(vote_intent["show_car_id"]),),
+            ).fetchone()
+        finally:
+            conn.close()
+
+    return render_template(
+        "external_vote_payment.html",
+        show=show,
+        vote_intent=vote_intent,
+        car=car,
+        external_payment_url=_show_external_payment_url(show),
+        external_payment_label=_show_external_payment_label(show),
+    )    
+  
+
+@app.post("/vote/external/<int:vote_intent_id>/submitted")
+@rate_limit("vote_external_submitted", 20, 300)
+def external_vote_mark_submitted(vote_intent_id: int):
+    vote_intent = get_vote_intent(vote_intent_id)
+    if not vote_intent:
+        return "Vote request not found.", 404
+
+    conn = _conn_direct()
+    try:
+        conn.execute(
+            """
+            UPDATE vote_intents
+            SET payment_status = 'pending_review'
+            WHERE id = ?
+            """,
+            (int(vote_intent_id),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return redirect(url_for("vote_success", pending=1))
+
 
 @app.get("/success")
 def vote_success():
+    pending = request.args.get("pending", "").strip()
+    if pending == "1":
+        show = get_active_show()
+        return render_template("vote_success.html", show=show)
+
     session_id = request.args.get("session_id", "").strip()
     show_slug = request.args.get("show_slug", "").strip()
     if not session_id:
         return "Missing session_id.", 400
-
+        
     show = get_show_by_slug(show_slug) if show_slug else get_active_show()
     if not show:
         return "Show not found.", 404
@@ -2061,6 +2171,53 @@ def admin_command_center():
         placeholders=placeholders,
         checked_in=checked_in,
     )
+
+
+@app.get("/admin/vote-reviews")
+@require_admin
+def admin_vote_reviews():
+    show = get_active_show()
+    if not show:
+        return "No active show.", 500
+
+    rows = list_pending_vote_reviews(int(show["id"]))
+    return render_template("admin_vote_reviews.html", show=show, rows=rows)
+
+
+@app.post("/admin/vote-reviews/<int:vote_intent_id>/approve")
+@require_admin
+def admin_vote_review_approve(vote_intent_id: int):
+    show = get_active_show()
+    try:
+        result = finalize_external_vote_intent(vote_intent_id)
+        _log_event(
+            "admin.vote_review.approved",
+            int(show["id"]) if show else None,
+            {"vote_intent_id": vote_intent_id, "already_finalized": bool(result.get("already_finalized"))},
+            actor_type="admin",
+        )
+        flash("Vote approved.", "ok")
+    except Exception as e:
+        flash(f"Could not approve vote: {e}", "error")
+    return redirect(url_for("admin_vote_reviews"))
+
+
+@app.post("/admin/vote-reviews/<int:vote_intent_id>/reject")
+@require_admin
+def admin_vote_review_reject(vote_intent_id: int):
+    show = get_active_show()
+    try:
+        reject_external_vote_intent(vote_intent_id)
+        _log_event(
+            "admin.vote_review.rejected",
+            int(show["id"]) if show else None,
+            {"vote_intent_id": vote_intent_id},
+            actor_type="admin",
+        )
+        flash("Vote rejected.", "ok")
+    except Exception as e:
+        flash(f"Could not reject vote: {e}", "error")
+    return redirect(url_for("admin_vote_reviews"))
     
 @app.post("/admin/login")
 @rate_limit("admin_login", 10, 900)

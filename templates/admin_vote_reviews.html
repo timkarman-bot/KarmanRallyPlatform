@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vote Reviews - Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="min-h-screen">
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Admin</div>
+          <h1 class="text-2xl font-bold tracking-tight">Vote Reviews</h1>
+          <p class="mt-1 text-sm text-slate-600">
+            {{ show["name"] if show and show["name"] else "Active Show" }}
+          </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <a href="/admin" class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+            Admin Home
+          </a>
+          <a href="/" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800">
+            View Site
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      {% set pending_count = rows|length if rows else 0 %}
+
+      <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="text-sm font-medium text-slate-500">Pending Reviews</div>
+          <div class="mt-2 text-3xl font-bold">{{ pending_count }}</div>
+          <div class="mt-1 text-xs text-slate-500">Votes waiting for admin decision</div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="text-sm font-medium text-slate-500">Review Type</div>
+          <div class="mt-2 text-lg font-semibold">Manual Approval Queue</div>
+          <div class="mt-1 text-xs text-slate-500">Approve valid votes, reject suspicious ones</div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="text-sm font-medium text-slate-500">Show Status</div>
+          <div class="mt-2 text-lg font-semibold">
+            {{ "Active" if show else "Unavailable" }}
+          </div>
+          <div class="mt-1 text-xs text-slate-500">
+            {% if show and show.get("id") %}Show ID: {{ show["id"] }}{% else %}No active show loaded{% endif %}
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="text-sm font-medium text-slate-500">Tip</div>
+          <div class="mt-2 text-sm font-medium text-slate-800">
+            Review IP, email, amount, and timestamps together before approving.
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        Approving should count the vote. Rejecting should mark it as denied and keep an audit trail.
+      </div>
+
+      {% if rows and rows|length > 0 %}
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Vote</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Vehicle</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Voter</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Payment</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Signals</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Submitted</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Actions</th>
+                </tr>
+              </thead>
+
+              <tbody class="divide-y divide-slate-200">
+                {% for row in rows %}
+                  <tr class="align-top hover:bg-slate-50">
+                    <td class="px-4 py-4">
+                      <div class="font-semibold text-slate-900">#{{ row["id"] }}</div>
+                      <div class="mt-1 text-xs text-slate-500">
+                        {% if row.get("vote_type") %}{{ row["vote_type"] }}{% else %}Vote Review{% endif %}
+                      </div>
+
+                      {% if row.get("notes") %}
+                        <div class="mt-3 rounded-xl bg-slate-100 p-3 text-xs text-slate-700">
+                          <div class="mb-1 font-semibold text-slate-800">Notes</div>
+                          {{ row["notes"] }}
+                        </div>
+                      {% endif %}
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="font-medium text-slate-900">
+                        {{ row.get("car_number") or row.get("vehicle_number") or "—" }}
+                      </div>
+                      <div class="mt-1 text-sm text-slate-700">
+                        {{ row.get("vehicle_name") or row.get("display_name") or row.get("entrant_name") or "Unknown vehicle" }}
+                      </div>
+                      {% if row.get("category_name") %}
+                        <div class="mt-1 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                          {{ row["category_name"] }}
+                        </div>
+                      {% endif %}
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="text-sm font-medium text-slate-900">
+                        {{ row.get("voter_name") or "Unnamed voter" }}
+                      </div>
+                      <div class="mt-1 text-sm text-slate-600 break-all">
+                        {{ row.get("voter_email") or "No email" }}
+                      </div>
+                      <div class="mt-1 text-xs text-slate-500 break-all">
+                        IP: {{ row.get("ip_address") or "Unknown" }}
+                      </div>
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="text-sm font-semibold text-slate-900">
+                        {% if row.get("amount_cents") is not none %}
+                          ${{ "%.2f"|format((row["amount_cents"] or 0) / 100) }}
+                        {% elif row.get("amount") is not none %}
+                          ${{ row["amount"] }}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </div>
+
+                      <div class="mt-1 text-xs text-slate-500 break-all">
+                        {% if row.get("payment_status") %}Status: {{ row["payment_status"] }}{% else %}Status: pending{% endif %}
+                      </div>
+
+                      {% if row.get("stripe_payment_intent_id") %}
+                        <div class="mt-1 text-xs text-slate-500 break-all">
+                          PI: {{ row["stripe_payment_intent_id"] }}
+                        </div>
+                      {% elif row.get("stripe_session_id") %}
+                        <div class="mt-1 text-xs text-slate-500 break-all">
+                          Session: {{ row["stripe_session_id"] }}
+                        </div>
+                      {% endif %}
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="flex flex-wrap gap-2">
+                        {% if row.get("flag_reason") %}
+                          <span class="rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                            {{ row["flag_reason"] }}
+                          </span>
+                        {% endif %}
+
+                        {% if row.get("duplicate_email") %}
+                          <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                            Duplicate Email
+                          </span>
+                        {% endif %}
+
+                        {% if row.get("duplicate_ip") %}
+                          <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                            Duplicate IP
+                          </span>
+                        {% endif %}
+
+                        {% if row.get("high_velocity") %}
+                          <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                            High Velocity
+                          </span>
+                        {% endif %}
+
+                        {% if not row.get("flag_reason") and not row.get("duplicate_email") and not row.get("duplicate_ip") and not row.get("high_velocity") %}
+                          <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                            No obvious flags
+                          </span>
+                        {% endif %}
+                      </div>
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="text-sm text-slate-900">
+                        {{ row.get("created_at") or row.get("submitted_at") or "—" }}
+                      </div>
+                      {% if row.get("updated_at") %}
+                        <div class="mt-1 text-xs text-slate-500">
+                          Updated: {{ row["updated_at"] }}
+                        </div>
+                      {% endif %}
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <div class="flex min-w-[210px] flex-col items-stretch gap-2 sm:items-end">
+                        <form method="post" action="/admin/vote-reviews/{{ row['id'] }}/approve" onsubmit="return confirm('Approve this vote?');">
+                          <button type="submit" class="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 sm:w-auto">
+                            Approve
+                          </button>
+                        </form>
+
+                        <form method="post" action="/admin/vote-reviews/{{ row['id'] }}/reject" onsubmit="return confirm('Reject this vote?');">
+                          <button type="submit" class="inline-flex w-full items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 sm:w-auto">
+                            Reject
+                          </button>
+                        </form>
+
+                        {% if row.get("voter_email") %}
+                          <a href="mailto:{{ row['voter_email'] }}"
+                             class="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto">
+                            Email Voter
+                          </a>
+                        {% endif %}
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% else %}
+        <div class="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+          <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl">
+            ✓
+          </div>
+          <h2 class="text-xl font-bold text-slate-900">No pending vote reviews</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Everything currently in the review queue has been handled.
+          </p>
+          <div class="mt-6">
+            <a href="/admin" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800">
+              Back to Admin
+            </a>
+          </div>
+        </div>
+      {% endif %}
+    </main>
+  </div>
+</body>
+</html>

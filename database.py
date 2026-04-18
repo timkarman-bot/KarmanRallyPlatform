@@ -1842,7 +1842,6 @@ def finalize_vote_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
         raise
     finally:
         conn.close()
-
         
 def finalize_external_vote_intent(vote_intent_id: int, approval_reference: str = "") -> Dict[str, Any]:
     conn = _conn()
@@ -1970,8 +1969,7 @@ def reject_external_vote_intent(vote_intent_id: int, rejection_reference: str = 
         conn.commit()
     finally:
         conn.close()
-
-
+        
 def reset_votes_for_show(show_id: int) -> None:
     conn = _conn()
     conn.execute("DELETE FROM votes WHERE show_id = ?", (show_id,))
