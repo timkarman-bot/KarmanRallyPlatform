@@ -216,6 +216,7 @@ def init_db() -> None:
         "ALTER TABLE show_cars ADD COLUMN waiver_received INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE show_cars ADD COLUMN waiver_received_at TEXT",
         "ALTER TABLE show_cars ADD COLUMN waiver_received_by TEXT",
+        "ALTER TABLE show_cars ADD COLUMN insurance_carrier TEXT",
         "ALTER TABLE show_cars ADD COLUMN registration_payment_status TEXT",
         "ALTER TABLE show_cars ADD COLUMN registration_amount_cents INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE show_cars ADD COLUMN registration_session_id TEXT",
@@ -270,6 +271,7 @@ def init_db() -> None:
     for sql in [
         "ALTER TABLE registration_intents ADD COLUMN waiver_text_sha256 TEXT",
         "ALTER TABLE registration_intents ADD COLUMN waiver_template_id INTEGER",
+        "ALTER TABLE registration_intents ADD COLUMN insurance_carrier TEXT",
     ]:
         try:
             cur.execute(sql)
@@ -1267,12 +1269,21 @@ def create_show_car(show_id: int, person_id: int, car_number: int, year: str, ma
         conn.close()
         raise ValueError("That car number is already registered for this show.") from e
 
-def update_show_car_details(show_car_id: int, year: str, make: str, model: str) -> None:
+def update_show_car_details(show_car_id: int, year: str, make: str, model: str, insurance_carrier: str = "") -> None:
     conn = _conn()
-    conn.execute("UPDATE show_cars SET year = ?, make = ?, model = ? WHERE id = ?", (year, make, model, show_car_id))
+    conn.execute(
+        """
+        UPDATE show_cars
+        SET year = ?,
+            make = ?,
+            model = ?,
+            insurance_carrier = ?
+        WHERE id = ?
+        """,
+        (year, make, model, (insurance_carrier or "").strip(), show_car_id),
+    )
     conn.commit()
     conn.close()
-
 
 def mark_show_car_checked_in(show_car_id: int) -> None:
     conn = _conn()
@@ -1496,11 +1507,12 @@ def create_registration_intent(
     year: str,
     make: str,
     model: str,
-    waiver_accepted: bool,
     waiver_signed_name: str,
     waiver_text: str,
     waiver_version: str,
     amount_cents: int,
+    insurance_carrier: str = "",
+    waiver_accepted: bool = False,
     waiver_template_id: Optional[int] = None,
     reserved_car_number: Optional[int] = None,
 ) -> Tuple[int, str, int]:
@@ -1567,7 +1579,7 @@ def create_registration_intent(
             """
             INSERT INTO registration_intents (
                 show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
-                car_number, year, make, model,
+                car_number, year, make, model, insurance_carrier,
                 waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                 waiver_template_id, amount_cents, payment_status
             )
@@ -1585,6 +1597,7 @@ def create_registration_intent(
                 year,
                 make,
                 model,
+                (insurance_carrier or "").strip(),
                 _b(waiver_accepted),
                 waiver_signed_name,
                 waiver_text,
@@ -1729,6 +1742,7 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                     year = ?,
                     make = ?,
                     model = ?,
+                    insurance_carrier = ?,
                     registration_payment_status = 'paid',
                     registration_amount_cents = ?,
                     registration_session_id = ?,
@@ -1750,6 +1764,7 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                     ri["year"],
                     ri["make"],
                     ri["model"],
+                    ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
                     int(ri["amount_cents"] or 0),
                     stripe_session_id,
                     ri["waiver_signed_name"],
@@ -1765,7 +1780,7 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
             cur.execute(
                 """
                 INSERT INTO show_cars (
-                    show_id, person_id, car_number, car_token, year, make, model,
+                    show_id, person_id, car_number, car_token, year, make, model, insurance_carrier,
                     registration_payment_status, registration_amount_cents, registration_session_id,
                     waiver_signed_name, waiver_signed_at, waiver_version, waiver_text, waiver_text_sha256, waiver_template_id,
                     waiver_received, waiver_received_at, waiver_received_by,
@@ -1781,6 +1796,7 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                     ri["year"],
                     ri["make"],
                     ri["model"],
+                    ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
                     "paid",
                     int(ri["amount_cents"] or 0),
                     stripe_session_id,

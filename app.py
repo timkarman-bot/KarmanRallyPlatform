@@ -729,6 +729,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
             SET year = ?,
                 make = ?,
                 model = ?,
+                insurance_carrier = ?,
                 registration_payment_status = 'paid',
                 registration_amount_cents = ?,
                 registration_session_id = ?,
@@ -746,6 +747,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 ri["year"],
                 ri["make"],
                 ri["model"],
+                ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
                 int(ri["amount_cents"] or 0),
                 stripe_session_id,
                 ri["waiver_signed_name"],
@@ -1033,8 +1035,10 @@ def register_submit():
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
+    insurance_carrier = request.form.get("insurance_carrier", "").strip()
     waiver_accepted = request.form.get("waiver_accepted", "") == "on"
     waiver_signed_name = request.form.get("waiver_signed_name", "").strip()
+    
 
     if not (name and year and make and model and waiver_signed_name):
         return render_template("register.html", show=show, error="Please fill out all required fields.")
@@ -1059,6 +1063,7 @@ def register_submit():
             year=year,
             make=make,
             model=model,
+            insurance_carrier=insurance_carrier,
             waiver_accepted=waiver_accepted,
             waiver_signed_name=waiver_signed_name,
             waiver_text=waiver_text,
@@ -1263,6 +1268,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
+    insurance_carrier = request.form.get("insurance_carrier", "").strip()
     waiver_accepted = request.form.get("waiver_accepted", "") == "on"
     waiver_signed_name = request.form.get("waiver_signed_name", "").strip()
 
@@ -1290,6 +1296,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             year=year,
             make=make,
             model=model,
+            insurance_carrier=insurance_carrier,
             waiver_accepted=True,
             waiver_signed_name=waiver_signed_name,
             waiver_text=waiver_text,
@@ -1308,10 +1315,10 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                 """
                 INSERT INTO registration_intents (
                     show_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
-                    car_number, year, make, model,
+                    car_number, year, make, model, insurance_carrier,
                     waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                     waiver_template_id, amount_cents, payment_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     int(show["id"]),
@@ -1325,6 +1332,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                     year,
                     make,
                     model,
+                    insurance_carrier,
                     1,
                     waiver_signed_name,
                     waiver_text,
@@ -1480,6 +1488,7 @@ def checkin_submit(show_slug: str, car_token: str):
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
+    insurance_carrier = request.form.get("insurance_carrier", "").strip()
 
     if not (name and phone and email and year and make and model):
         return render_template("checkin.html", show=show, car=car_private, error="Please fill out all required fields.")
@@ -1494,7 +1503,13 @@ def checkin_submit(show_slug: str, car_token: str):
         consent_text=car_private["consent_text"] if "consent_text" in car_private.keys() else CONSENT_TEXT_CAR_OWNER,
         consent_version=car_private["consent_version"] if "consent_version" in car_private.keys() else CONSENT_VERSION,
     )
-    update_show_car_details(int(car_private["id"]), year=year, make=make, model=model)
+    update_show_car_details(
+        int(car_private["id"]),
+        year=year,
+        make=make,
+        model=model,
+        insurance_carrier=insurance_carrier,
+    )
     mark_show_car_checked_in(int(car_private["id"]))
     _log_event(
         "checkin.completed",

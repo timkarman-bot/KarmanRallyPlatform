@@ -8,7 +8,7 @@
 
   <p class="mt-2 text-slate-600">
     This page is for confirming or updating an existing registration.
-  Phone and email are stored privately and are not shown on the public voting page.
+    Phone and email are stored privately and are not shown on the public voting page.
   </p>
 
   {% if error %}
@@ -117,6 +117,18 @@
             value="{{ car['model'] or '' }}"
             class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
             required
+          >
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="text-sm font-semibold">
+            Insurance carrier <span class="text-slate-500">(optional)</span>
+          </label>
+          <input
+            name="insurance_carrier"
+            value="{{ car['insurance_carrier'] or '' }}"
+            class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
+            placeholder="Example: State Farm, GEICO, Progressive"
           >
         </div>
       </div>
