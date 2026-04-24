@@ -320,7 +320,7 @@ def build_landscape_cards_pdf(
 
         grid_items: List[Tuple[str, str]] = CATEGORY_SLUGS + [("", "INFO")]
 
-        for i in range(cols * rows):
+        for i in range(len(grid_items)):
             col = i % cols
             row = i // cols
             x0 = qr_x + inner_pad_x + col * cell_w
