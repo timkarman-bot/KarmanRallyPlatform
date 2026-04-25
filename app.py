@@ -1932,7 +1932,10 @@ def vote_success():
     if sess.payment_status != "paid":
         return render_template("payment_not_complete.html")
 
-    finalize_vote_intent_paid(sess.id)
+    try:
+        finalize_vote_intent_paid(sess.id)
+    except Exception:
+        pass
     return render_template("vote_success.html", show=show)
 
 @app.post("/sponsorship/submit")
@@ -2859,12 +2862,60 @@ def admin_leads_export():
     )
 
 
+
+def _sync_recent_paid_platform_vote_sessions(show: Any, lookback_hours: int = 12, limit: int = 100) -> int:
+    """
+    Emergency live-show safety net:
+    Pull recent paid Stripe Checkout Sessions from the platform account and finalize any vote sessions.
+    This helps when Stripe webhooks are delayed/misconfigured or the voter does not return to the success page.
+    """
+    if not show or not PLATFORM_STRIPE_SECRET_KEY:
+        return 0
+
+    synced = 0
+    try:
+        created_gte = int((datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).timestamp())
+        sessions = stripe.checkout.Session.list(
+            limit=limit,
+            created={"gte": created_gte},
+        )
+
+        for sess in sessions.auto_paging_iter():
+            try:
+                if getattr(sess, "payment_status", "") != "paid":
+                    continue
+
+                md = getattr(sess, "metadata", None) or {}
+                if md.get("payment_item_type") != "vote":
+                    continue
+
+                if str(md.get("show_id", "")) != str(show["id"]):
+                    continue
+
+                finalize_vote_intent_paid(sess.id)
+                synced += 1
+            except Exception:
+                continue
+    except Exception:
+        return synced
+
+    return synced
+
+
+
+
 @app.get("/admin/leaderboard")
 @require_admin
 def admin_leaderboard():
     show = get_active_show()
     if not show:
         return "No active show.", 500
+
+    # LIVE FIX 2026-04-25:
+    # Before showing the leaderboard, catch up any paid platform Stripe vote sessions
+    # that did not finalize through webhook/success return.
+    _sync_recent_paid_platform_vote_sessions(show)
+
     return render_template(
         "leaderboard.html",
         show=show,
