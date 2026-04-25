@@ -1795,10 +1795,9 @@ def create_checkout_session():
             "redirect_url": url_for("external_vote_payment_page", vote_intent_id=vote_intent_id),
         })
         
-    acct = _connected_account_id(show)
-    if not acct:
-        return jsonify({"ok": False, "error": "The charity payment account is not connected for this show."}), 400
-
+    # LIVE FIX 2026-04-25:
+    # Use the platform Stripe account for votes when payment_mode is "stripe".
+    # The previous code required a connected charity Stripe account here, which blocked checkout.
     _require_platform_stripe()
     vote_intent_id = create_vote_intent(
         int(show["id"]),
@@ -1922,13 +1921,11 @@ def vote_success():
     if not show:
         return "Show not found.", 404
 
-    acct = _connected_account_id(show)
-    if not acct:
-        return render_template("payment_not_complete.html")
-
+    # LIVE FIX 2026-04-25:
+    # Vote checkout is created on the platform Stripe account, so retrieve it from platform Stripe.
     _require_platform_stripe()
     try:
-        sess = stripe.checkout.Session.retrieve(session_id, stripe_account=acct)
+        sess = stripe.checkout.Session.retrieve(session_id)
     except Exception:
         return render_template("payment_not_complete.html")
 
