@@ -274,8 +274,10 @@ def _slot_payloads_from_request() -> list[dict[str, Any]]:
             "id": slot_id,
             "slot_label": label,
             "slot_date": request.form.get(f"slot_{idx}_date", "").strip(),
+            "cars_arrive_time": request.form.get(f"slot_{idx}_cars_arrive_time", "").strip(),
             "start_time": request.form.get(f"slot_{idx}_start_time", "").strip(),
             "end_time": request.form.get(f"slot_{idx}_end_time", "").strip(),
+            "participant_instructions": request.form.get(f"slot_{idx}_participant_instructions", "").strip(),
             "capacity": request.form.get(f"slot_{idx}_capacity", "0").strip(),
             "sort_order": request.form.get(f"slot_{idx}_sort_order", str(idx * 10)).strip(),
             "is_active": "on" if request.form.get(f"slot_{idx}_is_active") == "on" else "0",
@@ -1123,6 +1125,7 @@ def show_page(slug: str):
         "show.html",
         show=show,
         not_found=False,
+        registration_slots=_registration_slots_for_public(int(show["id"])),
     )
 
 @app.get("/register")
@@ -2622,7 +2625,7 @@ def admin_shows_create():
         title=title,
         show_type=show_type,
         date=request.form.get("date", "").strip(),
-        time=request.form.get("time", "").strip(),
+        time="",
         cars_arrive_time=request.form.get("cars_arrive_time", "").strip(),
         day_of_registration_time=request.form.get("day_of_registration_time", "").strip(),
         show_start_time=request.form.get("show_start_time", "").strip(),
@@ -2712,7 +2715,7 @@ def admin_shows_update(show_id: int):
         show_type=show_type,
         flyer_image_path=flyer_image_path,
         date=request.form.get("date", "").strip(),
-        time=request.form.get("time", "").strip(),
+        time="",
         cars_arrive_time=request.form.get("cars_arrive_time", "").strip(),
         day_of_registration_time=request.form.get("day_of_registration_time", "").strip(),
         show_start_time=request.form.get("show_start_time", "").strip(),

@@ -76,8 +76,15 @@
             </td>
             <td class="py-3 pr-4">
               <div>{{ car['slot_label'] or '—' }}</div>
-              {% if car['slot_date'] or car['slot_start_time'] or car['slot_end_time'] %}
-                <div class="text-xs text-slate-500">{{ car['slot_date'] or '' }} {% if car['slot_start_time'] %}{{ car['slot_start_time'] }}{% endif %}{% if car['slot_end_time'] %}–{{ car['slot_end_time'] }}{% endif %}</div>
+              {% if car['slot_date'] or car['slot_cars_arrive_time'] or car['slot_start_time'] or car['slot_end_time'] %}
+                <div class="text-xs text-slate-500">
+                  {{ car['slot_date'] or '' }}
+                  {% if car['slot_cars_arrive_time'] %}<br>Cars arrive: {{ car['slot_cars_arrive_time'] }}{% endif %}
+                  {% if car['slot_start_time'] or car['slot_end_time'] %}<br>Event: {{ car['slot_start_time'] or '' }}{% if car['slot_end_time'] %}–{{ car['slot_end_time'] }}{% endif %}{% endif %}
+                </div>
+              {% endif %}
+              {% if car['slot_participant_instructions'] %}
+                <div class="mt-1 text-xs text-blue-700 whitespace-pre-line">{{ car['slot_participant_instructions'] }}</div>
               {% endif %}
             </td>
             <td class="py-3 pr-4">{{ car['year'] }} {{ car['make'] }} {{ car['model'] }}</td>

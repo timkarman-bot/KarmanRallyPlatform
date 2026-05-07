@@ -1,37 +1,39 @@
-Karman Kar Shows & Events — Cruise In / Voting Disabled Cleanup v6
+Karman Kar Shows & Events — v7 Session Timing Upgrade
+Date: 2026-05-07
 
-Files included:
+Purpose
+- Removes the admin-facing General Time field from Manage Shows.
+- Keeps the legacy database 'time' column for old records/backward compatibility, but new create/update saves it blank.
+- Adds session-level Cars Arrive Time to Registration Days / Sessions.
+- Adds session-level Participant Instructions to Registration Days / Sessions.
+- Displays arrival time and instructions on:
+  - public registration page
+  - placeholder claim page
+  - public show page
+  - admin show mode page
+- Exports the added session fields in registration_slots.csv through the existing snapshot export.
+
+Replacement files included
 - app.py
 - database.py
 - templates/admin_shows.html
-- templates/admin.html
 - templates/register.html
 - templates/placeholder_claim.html
 - templates/admin_show_mode.html
-- templates/vote_qty.html
-- templates/voting_closed.html
 - templates/show.html
+- templates/admin.html
+- INSTALL_NOTES.txt
 
-What changed:
-1. Added show type "Cruise In" using internal value cruise_in.
-2. Manage Shows create/update screens now expose Type of Show.
-3. Admin dashboard Show Type now includes Cruise In.
-4. Voting Mode now supports "None — voting disabled".
-5. Voting Payment Mode now supports "None — no vote payment".
-6. Cruise In defaults voting/payment to none if left on default values during create/update.
-7. Registration slots remain fully customizable; blank or 0 capacity means no cap.
-8. Voting routes now return closed/disabled instead of attempting payment when voting/payment is none.
-9. Existing Full and PopUp behavior remains intact.
+Recommended checks before commit
+python -m py_compile app.py database.py sponsorship_blueprint.py
+findstr /n "slot_1_cars_arrive_time" templates\admin_shows.html
+findstr /n "participant_instructions" app.py database.py templates\register.html templates\placeholder_claim.html templates\show.html
+findstr /n "General Time" templates\admin_shows.html
 
-Verification commands:
-python -m py_compile app.py database.py
+The General Time command should return no lines from templates\admin_shows.html.
 
-findstr /n "cruise_in" app.py database.py templates\admin_shows.html templates\admin.html
-findstr /n "Voting is not enabled" templates\voting_closed.html templates\vote_qty.html
-findstr /n "payment_mode == \"none\"" app.py
-
-Git:
+Suggested git commands
 git status --short
 git add -A
-git commit -m "Add cruise-in show type and voting disabled mode"
+git commit -m "Add session arrival times and participant instructions"
 git push origin main

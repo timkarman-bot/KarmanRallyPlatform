@@ -26,6 +26,33 @@
         <div><span class="font-semibold">Voting:</span> Not enabled for this event</div>
       {% endif %}
     </div>
+
+    {% if registration_slots %}
+    <div class="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+      <h2 class="text-lg font-semibold text-slate-900">Registration Days / Sessions</h2>
+      <div class="mt-3 grid gap-3">
+        {% for slot in registration_slots %}
+        <div class="rounded-2xl bg-white border border-blue-100 p-4">
+          <div class="font-semibold text-slate-900">{{ slot['slot_label'] }}</div>
+          <div class="mt-1 text-sm text-slate-700">
+            {% if slot['slot_date'] %}{{ slot['slot_date'] }}{% endif %}
+            {% if slot['cars_arrive_time'] %}{% if slot['slot_date'] %} • {% endif %}Cars arrive: {{ slot['cars_arrive_time'] }}{% endif %}
+            {% if slot['start_time'] or slot['end_time'] %}{% if slot['slot_date'] or slot['cars_arrive_time'] %} • {% endif %}Event: {{ slot['start_time'] }}{% if slot['end_time'] %}–{{ slot['end_time'] }}{% endif %}{% endif %}
+          </div>
+          {% if slot['capacity'] and slot['capacity'] > 0 %}
+            <div class="mt-1 text-xs {% if slot['is_full'] == 1 %}text-red-700{% else %}text-emerald-700{% endif %}">
+              {% if slot['is_full'] == 1 %}Full{% else %}{{ slot['remaining_count'] }} of {{ slot['capacity'] }} spots left{% endif %}
+            </div>
+          {% endif %}
+          {% if slot['participant_instructions'] %}
+            <div class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900 whitespace-pre-line">{{ slot['participant_instructions'] }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <div class="mt-7 flex flex-wrap gap-3">
       {% if prereg_allowed(show) %}<a class="btn btn-primary" href="{{ url_for('register_page') }}">Register your car</a>{% endif %}
       <a class="btn btn-outline" href="{{ url_for('events') }}">Upcoming events</a>

@@ -287,8 +287,10 @@ def init_db() -> None:
             show_id INTEGER NOT NULL,
             slot_label TEXT NOT NULL,
             slot_date TEXT,
+            cars_arrive_time TEXT,
             start_time TEXT,
             end_time TEXT,
+            participant_instructions TEXT,
             capacity INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 100,
             is_active INTEGER NOT NULL DEFAULT 1,
@@ -298,6 +300,15 @@ def init_db() -> None:
         )
         """
     )
+
+    for sql in [
+        "ALTER TABLE show_registration_slots ADD COLUMN cars_arrive_time TEXT",
+        "ALTER TABLE show_registration_slots ADD COLUMN participant_instructions TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
 
     for sql in [
         "CREATE INDEX IF NOT EXISTS idx_show_registration_slots_show_id ON show_registration_slots(show_id)",
@@ -1189,8 +1200,10 @@ def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str,
             values = (
                 label,
                 (payload.get("slot_date") or "").strip(),
+                (payload.get("cars_arrive_time") or "").strip(),
                 (payload.get("start_time") or "").strip(),
                 (payload.get("end_time") or "").strip(),
+                (payload.get("participant_instructions") or "").strip(),
                 capacity,
                 sort_order,
                 is_active,
@@ -1200,7 +1213,7 @@ def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str,
                 cur.execute(
                     """
                     UPDATE show_registration_slots
-                    SET slot_label = ?, slot_date = ?, start_time = ?, end_time = ?, capacity = ?,
+                    SET slot_label = ?, slot_date = ?, cars_arrive_time = ?, start_time = ?, end_time = ?, participant_instructions = ?, capacity = ?,
                         sort_order = ?, is_active = ?, updated_at = datetime('now')
                     WHERE show_id = ? AND id = ?
                     """,
@@ -1211,8 +1224,8 @@ def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str,
                 cur.execute(
                     """
                     INSERT INTO show_registration_slots
-                        (slot_label, slot_date, start_time, end_time, capacity, sort_order, is_active, show_id, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        (slot_label, slot_date, cars_arrive_time, start_time, end_time, participant_instructions, capacity, sort_order, is_active, show_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     values,
                 )
@@ -1614,6 +1627,11 @@ def search_show_cars_admin(show_id: int, query: str) -> List[sqlite3.Row]:
             sc.checked_in_at,
             sc.registration_slot_id,
             slot.slot_label,
+            slot.slot_date,
+            slot.cars_arrive_time as slot_cars_arrive_time,
+            slot.start_time as slot_start_time,
+            slot.end_time as slot_end_time,
+            slot.participant_instructions as slot_participant_instructions,
             p.name AS owner_name,
             p.phone AS owner_phone,
             p.email AS owner_email,
@@ -1706,8 +1724,10 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
             sc.registration_slot_id,
             slot.slot_label,
             slot.slot_date,
+            slot.cars_arrive_time as slot_cars_arrive_time,
             slot.start_time as slot_start_time,
             slot.end_time as slot_end_time,
+            slot.participant_instructions as slot_participant_instructions,
             p.name as owner_name
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id

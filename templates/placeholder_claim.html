@@ -25,8 +25,12 @@
             <span class="block font-semibold text-slate-900">{{ slot['slot_label'] }}</span>
             <span class="block text-sm text-slate-600">
               {% if slot['slot_date'] %}{{ slot['slot_date'] }}{% endif %}
-              {% if slot['start_time'] or slot['end_time'] %}{% if slot['slot_date'] %} • {% endif %}{{ slot['start_time'] }}{% if slot['end_time'] %}–{{ slot['end_time'] }}{% endif %}{% endif %}
+              {% if slot['cars_arrive_time'] %}{% if slot['slot_date'] %} • {% endif %}Cars arrive: {{ slot['cars_arrive_time'] }}{% endif %}
+              {% if slot['start_time'] or slot['end_time'] %}{% if slot['slot_date'] or slot['cars_arrive_time'] %} • {% endif %}Event: {{ slot['start_time'] }}{% if slot['end_time'] %}–{{ slot['end_time'] }}{% endif %}{% endif %}
             </span>
+            {% if slot['participant_instructions'] %}
+              <span class="block mt-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900 whitespace-pre-line">{{ slot['participant_instructions'] }}</span>
+            {% endif %}
             <span class="block text-xs mt-1 {% if slot['is_full'] == 1 %}text-red-600{% else %}text-emerald-700{% endif %}">
               {% if slot['capacity'] and slot['capacity'] > 0 %}
                 {% if slot['is_full'] == 1 %}Full{% else %}{{ slot['remaining_count'] }} of {{ slot['capacity'] }} spots left{% endif %}
