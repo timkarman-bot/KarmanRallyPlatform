@@ -152,6 +152,7 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN allow_custom_votes INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE shows ADD COLUMN preset_vote_options TEXT NOT NULL DEFAULT '1,5,10,20,25'",
         "ALTER TABLE shows ADD COLUMN max_votes_per_checkout INTEGER NOT NULL DEFAULT 50",
+        "ALTER TABLE shows ADD COLUMN allow_sponsorships INTEGER NOT NULL DEFAULT 1",
     ]:
         try:
             cur.execute(sql)
@@ -819,6 +820,7 @@ def create_show_admin(
     allow_custom_votes: int = 1,
     preset_vote_options: str = "1,5,10,20,25",
     max_votes_per_checkout: int = 50,
+    allow_sponsorships: int = 1,
 ) -> int:
     conn = _conn()
     cur = conn.cursor()
@@ -845,9 +847,9 @@ def create_show_admin(
             cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
             waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
             venue_city, venue_state, venue_zip, charity_name, charity_description,
-            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout
+            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slug.strip(),
@@ -893,6 +895,7 @@ def create_show_admin(
             int(allow_custom_votes),
             (preset_vote_options or "1,5,10,20,25").strip(),
             int(max_votes_per_checkout or 50),
+            1 if int(allow_sponsorships or 0) == 1 else 0,
         ),
     )
     conn.commit()
@@ -945,6 +948,7 @@ def update_show_admin_record(
     allow_custom_votes: int = 1,
     preset_vote_options: str = "1,5,10,20,25",
     max_votes_per_checkout: int = 50,
+    allow_sponsorships: int = 1,
 ) -> None:
     conn = _conn()
     conn.execute(
@@ -958,7 +962,7 @@ def update_show_admin_record(
             organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
             venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?,
             voting_mode = ?, payment_mode = ?, charity_processor_label = ?, external_payment_url = ?, allow_custom_votes = ?,
-            preset_vote_options = ?, max_votes_per_checkout = ?
+            preset_vote_options = ?, max_votes_per_checkout = ?, allow_sponsorships = ?
         WHERE id = ?
         """,
         (
@@ -1003,6 +1007,7 @@ def update_show_admin_record(
             int(allow_custom_votes),
             (preset_vote_options or "1,5,10,20,25").strip(),
             int(max_votes_per_checkout or 50),
+            1 if int(allow_sponsorships or 0) == 1 else 0,
             int(show_id),
         ),
     )

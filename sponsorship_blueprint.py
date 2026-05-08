@@ -65,6 +65,16 @@ def _logo_upload_dir() -> Path:
     return base
 
 
+
+
+def _show_allows_sponsorships(show) -> bool:
+    if not show:
+        return False
+    try:
+        return int(show["allow_sponsorships"] if "allow_sponsorships" in show.keys() else 1) == 1
+    except Exception:
+        return True
+
 def _save_logo(file_storage):
     if not file_storage or not getattr(file_storage, "filename", ""):
         return ""
@@ -91,6 +101,8 @@ def public_sponsorship_page(show_slug: str):
     show = get_show_by_slug(show_slug)
     if not show:
         return "Show not found.", 404
+    if not _show_allows_sponsorships(show):
+        return render_template("sponsorship_closed.html", show=show), 403
     title_sponsor, sponsors = get_show_sponsors(int(show["id"])) or (None, [])
     return render_template(
         "sponsorship.html",

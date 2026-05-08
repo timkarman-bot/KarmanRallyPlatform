@@ -335,6 +335,20 @@ def _show_voting_disabled(show: Any) -> bool:
         return False
 
 
+
+
+def sponsorship_allowed(show: Any) -> bool:
+    """True when a show should display public sponsorship links/forms."""
+    if not show:
+        return False
+    try:
+        return int(show["allow_sponsorships"] if "allow_sponsorships" in show.keys() else 1) == 1
+    except Exception:
+        try:
+            return int(getattr(show, "allow_sponsorships", 1) or 1) == 1
+        except Exception:
+            return True
+
 def _show_max_votes_per_checkout(show: Any) -> int:
     try:
         return max(1, int(show["max_votes_per_checkout"] or 50))
@@ -978,6 +992,7 @@ def inject_globals():
         "sponsors": sponsors,
         "is_admin": session.get("admin_authed", False),
         "prereg_allowed": prereg_allowed,
+        "sponsorship_allowed": sponsorship_allowed,
         "registered_cars": registered_cars,
     }
 
@@ -2162,6 +2177,8 @@ def sponsorship_public_submit():
     show = get_show_by_slug(show_slug)
     if not show:
         return "Show not found.", 404
+    if not sponsorship_allowed(show):
+        return render_template("sponsorship_closed.html", show=show), 403
         
     agree_sponsor_terms = request.form.get("agree_sponsor_terms", "").strip()
     if agree_sponsor_terms != "yes":
@@ -2701,6 +2718,7 @@ def admin_shows_create():
         allow_custom_votes=allow_custom_votes,
         preset_vote_options=preset_vote_options,
         max_votes_per_checkout=max_votes_per_checkout,
+        allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
     )
     save_registration_slots_for_show(new_show_id, _slot_payloads_from_request())
 
@@ -2791,6 +2809,7 @@ def admin_shows_update(show_id: int):
         allow_custom_votes=allow_custom_votes,
         preset_vote_options=preset_vote_options,
         max_votes_per_checkout=max_votes_per_checkout,
+        allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
     )
     save_registration_slots_for_show(show_id, _slot_payloads_from_request())
 

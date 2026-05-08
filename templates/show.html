@@ -58,7 +58,7 @@
     <div class="mt-7 flex flex-wrap gap-3">
       {% if prereg_allowed(show) %}<a class="btn btn-primary" href="{{ url_for('register_page_for_show', show_slug=show['slug']) }}">Register your car</a>{% endif %}
       <a class="btn btn-outline" href="{{ url_for('events') }}">Upcoming events</a>
-      <a class="btn btn-outline" href="{{ url_for('sponsorship.public_sponsorship_page', show_slug=show['slug']) }}">Sponsor this event</a>
+      {% if sponsorship_allowed(show) %}<a class="btn btn-outline" href="{{ url_for('sponsorship.public_sponsorship_page', show_slug=show['slug']) }}">Sponsor this event</a>{% endif %}
     </div>
 
     {% if prereg_allowed(show) %}

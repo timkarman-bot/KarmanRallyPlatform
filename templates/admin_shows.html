@@ -337,6 +337,14 @@
 
       <div>
         <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="allow_sponsorships" checked>
+          Allow sponsorships
+        </label>
+        <div class="mt-1 text-xs text-slate-500">Turn off to hide sponsor links/forms for this show.</div>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" name="hide_address">
           Hide address
         </label>
@@ -631,6 +639,14 @@
           <input type="checkbox" name="show_on_site" {% if s['show_on_site'] == 1 %}checked{% endif %}>
           Show on site
         </label>
+      </div>
+
+      <div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="allow_sponsorships" {% if (s['allow_sponsorships'] if 'allow_sponsorships' in s.keys() else 1) == 1 %}checked{% endif %}>
+          Allow sponsorships
+        </label>
+        <div class="mt-1 text-xs text-slate-500">Turn off to hide sponsor links/forms for this show.</div>
       </div>
 
       <div>

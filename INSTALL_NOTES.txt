@@ -1,26 +1,57 @@
-Karman Kar Shows & Events — v9 formatting + registration help
+Karman Kar Shows & Events — v10 Sponsorship Toggle Upgrade
+===========================================================
 
-Files included:
-- templates/show.html
-- templates/home.html
-- templates/register.html
-- templates/placeholder_claim.html
-- templates/registration_closed.html
-- app.py (unchanged from v8, included for continuity)
-- INSTALL_NOTES.txt
+Purpose
+-------
+Adds a per-show Allow Sponsorships switch so public sponsor links/forms can be hidden for events that do not use sponsors.
 
-What changed:
-1. Public show descriptions now preserve line breaks and spacing entered in the admin description field.
-2. Home page description also preserves line breaks.
-3. Registration pages now show a help block with a clickable email link.
-4. Registration closed/error page now shows the same help email.
-5. Email is visible in plain text for copy/paste: info@karmankarshowsandevents.com
+Files included
+--------------
+app.py
+database.py
+sponsorship_blueprint.py
+templates/admin_shows.html
+templates/base.html
+templates/home.html
+templates/show.html
+templates/sponsorship_closed.html
+templates/sponsorship.html
+INSTALL_NOTES.txt
 
-Suggested checks before deployment:
+What changed
+------------
+1. Adds shows.allow_sponsorships with default ON for existing shows.
+2. Adds Allow Sponsorships checkbox on Manage Shows create/update forms.
+3. Hides public Sponsor links on:
+   - top navigation
+   - home page
+   - show details page
+4. Blocks direct /sponsorship/<show_slug> access when sponsorships are disabled.
+5. Blocks public sponsorship form submits if sponsorships are disabled.
+6. Adds a friendly sponsorship_closed.html page.
+
+Install
+-------
+Copy these files into C:\karman-kar-shows and replace existing files when prompted.
+
+Pre-deploy checks
+-----------------
 python -m py_compile app.py database.py sponsorship_blueprint.py
-findstr /n /c:"whitespace-pre-line" templates\show.html templates\home.html templatesegister.html templates\placeholder_claim.html
-findstr /n /c:"info@karmankarshowsandevents.com" templates\show.html templatesegister.html templates\placeholder_claim.html templatesegistration_closed.html
+findstr /n /c:"allow_sponsorships" app.py database.py sponsorship_blueprint.py templates\admin_shows.html
+findstr /n /c:"sponsorship_allowed" app.py templates\base.html templates\home.html templates\show.html
+findstr /n /c:"sponsorship_closed.html" app.py sponsorship_blueprint.py
 
+Git
+---
+git status --short
 git add -A
-git commit -m "Improve public description formatting and registration help"
+git commit -m "Add per-show sponsorship toggle"
 git push origin main
+
+After deploy
+------------
+1. Open /admin/shows.
+2. Edit a show and uncheck Allow Sponsorships.
+3. Confirm Sponsor link disappears from top nav/home/show page.
+4. Visit /sponsorship/<show-slug> directly and confirm the sponsorship unavailable page appears.
+5. Re-check Allow Sponsorships and confirm sponsor links return.
