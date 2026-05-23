@@ -116,6 +116,7 @@ from database import (
     get_registration_slot,
     show_has_registration_slots,
     show_slot_has_capacity,
+    get_show_registration_slot_selection_mode,
 )
 
 
@@ -289,15 +290,39 @@ def _registration_slots_for_public(show_id: int):
     return list_registration_slots(show_id, public_only=True)
 
 
-def _selected_registration_slot_id(show_id: int) -> Optional[int]:
-    raw = request.form.get("registration_slot_id", "").strip()
-    if not raw:
-        return None
-    if not raw.isdigit():
-        return None
-    slot_id = int(raw)
-    slot = get_registration_slot(show_id, slot_id)
-    return slot_id if slot else None
+def _registration_slot_selection_mode(show: Any) -> str:
+    try:
+        value = (show["registration_slot_selection_mode"] if "registration_slot_selection_mode" in show.keys() else "single") or "single"
+    except Exception:
+        value = "single"
+    value = str(value).strip().lower()
+    return value if value in {"single", "multiple"} else "single"
+
+
+def _selected_registration_slot_ids(show: Any) -> list[int]:
+    show_id = int(show["id"])
+    mode = _registration_slot_selection_mode(show)
+    raw_values = request.form.getlist("registration_slot_ids")
+    raw_single = request.form.get("registration_slot_id", "").strip()
+    if raw_single:
+        raw_values.append(raw_single)
+    out: list[int] = []
+    for raw in raw_values:
+        raw = str(raw or "").strip()
+        if not raw.isdigit():
+            continue
+        slot_id = int(raw)
+        if slot_id in out:
+            continue
+        if get_registration_slot(show_id, slot_id):
+            out.append(slot_id)
+    if mode == "single" and len(out) > 1:
+        return out[:1]
+    return out
+
+
+def _primary_registration_slot_id(slot_ids: list[int]) -> Optional[int]:
+    return int(slot_ids[0]) if slot_ids else None
 
 
 def _show_payment_mode(show: Any) -> str:
@@ -1202,12 +1227,14 @@ def _register_submit_impl(show_slug: Optional[str] = None):
         return render_template("registration_closed.html", show=show), 403
 
     registration_slots = _registration_slots_for_public(int(show["id"]))
-    registration_slot_id = _selected_registration_slot_id(int(show["id"]))
+    registration_slot_ids = _selected_registration_slot_ids(show)
+    registration_slot_id = _primary_registration_slot_id(registration_slot_ids)
     if registration_slots:
-        if not registration_slot_id:
-            return render_template("register.html", show=show, registration_slots=registration_slots, error="Please select which day/session you are registering for.")
-        if not show_slot_has_capacity(int(show["id"]), registration_slot_id):
-            return render_template("register.html", show=show, registration_slots=registration_slots, error="That day/session is full.")
+        if not registration_slot_ids:
+            return render_template("register.html", show=show, registration_slots=registration_slots, error="Please select which day/session/activity you are registering for.")
+        for selected_slot_id in registration_slot_ids:
+            if not show_slot_has_capacity(int(show["id"]), selected_slot_id):
+                return render_template("register.html", show=show, registration_slots=registration_slots, error="One of the selected days/sessions is full.")
     elif not show_has_capacity(int(show["id"])):
         return render_template("register.html", show=show, registration_slots=registration_slots, error="This show has reached its maximum number of cars.")
 
@@ -1257,6 +1284,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
             amount_cents=registration_fee_cents,
             waiver_template_id=waiver_template_id,
             registration_slot_id=registration_slot_id,
+            registration_slot_ids=registration_slot_ids,
         )
     except ValueError as e:
         return render_template("register.html", show=show, registration_slots=registration_slots, error=str(e))
@@ -1495,12 +1523,14 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
         return "This car is already registered.", 400
 
     registration_slots = _registration_slots_for_public(int(show["id"]))
-    registration_slot_id = _selected_registration_slot_id(int(show["id"]))
+    registration_slot_ids = _selected_registration_slot_ids(show)
+    registration_slot_id = _primary_registration_slot_id(registration_slot_ids)
     if registration_slots:
-        if not registration_slot_id:
-            return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Please select which day/session you are registering for.")
-        if not show_slot_has_capacity(int(show["id"]), registration_slot_id):
-            return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="That day/session is full.")
+        if not registration_slot_ids:
+            return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Please select which day/session/activity you are registering for.")
+        for selected_slot_id in registration_slot_ids:
+            if not show_slot_has_capacity(int(show["id"]), selected_slot_id):
+                return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="One of the selected days/sessions is full.")
     
     owner_name = request.form.get("name", "").strip()
     phone = request.form.get("phone", "").strip()
@@ -1550,6 +1580,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             waiver_template_id=waiver_template_id,
             reserved_car_number=car_number,
             registration_slot_id=registration_slot_id,
+            registration_slot_ids=registration_slot_ids,
         )
     except ValueError:
         conn = _conn_direct()
@@ -1560,7 +1591,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             cur.execute(
                 """
                 INSERT INTO registration_intents (
-                    show_id, registration_slot_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
+                    show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
                     car_number, year, make, model, insurance_carrier,
                     waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                     waiver_template_id, amount_cents, payment_status
@@ -1569,6 +1600,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                 (
                     int(show["id"]),
                     int(registration_slot_id) if registration_slot_id else None,
+                    __import__('json').dumps(registration_slot_ids),
                     intent_token,
                     owner_name,
                     phone,
@@ -2609,6 +2641,7 @@ def admin_show_settings():
             1,
             int(request.form.get("max_votes_per_checkout", "50") or "50")
         ) if (request.form.get("max_votes_per_checkout", "50") or "50").isdigit() else 50,
+        registration_slot_selection_mode=request.form.get("registration_slot_selection_mode", "single").strip(),
     )
     _log_event("admin.show_settings_saved", int(show["id"]), {"show_type": show_type, "max_cars": max_cars}, actor_type="admin")
     flash("Show settings saved.", "ok")
@@ -2719,6 +2752,7 @@ def admin_shows_create():
         preset_vote_options=preset_vote_options,
         max_votes_per_checkout=max_votes_per_checkout,
         allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
+        registration_slot_selection_mode=request.form.get("registration_slot_selection_mode", "single").strip(),
     )
     save_registration_slots_for_show(new_show_id, _slot_payloads_from_request())
 
@@ -2810,6 +2844,7 @@ def admin_shows_update(show_id: int):
         preset_vote_options=preset_vote_options,
         max_votes_per_checkout=max_votes_per_checkout,
         allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
+        registration_slot_selection_mode=request.form.get("registration_slot_selection_mode", "single").strip(),
     )
     save_registration_slots_for_show(show_id, _slot_payloads_from_request())
 

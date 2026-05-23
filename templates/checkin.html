@@ -33,6 +33,20 @@
         </div>
       </div>
 
+      {% set car_slot_labels = car["registration_slot_labels"] if "registration_slot_labels" in car.keys() else "" %}
+      {% set legacy_slot_label = car["slot_label"] if "slot_label" in car.keys() else "" %}
+      {% if car_slot_labels %}
+      <div class="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <div class="text-sm font-semibold text-blue-950">Registered Day(s) / Session(s)</div>
+        <div class="mt-1 text-sm text-blue-900">{{ car_slot_labels }}</div>
+      </div>
+      {% elif legacy_slot_label %}
+      <div class="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <div class="text-sm font-semibold text-blue-950">Registered Day / Session</div>
+        <div class="mt-1 text-sm text-blue-900">{{ legacy_slot_label }}</div>
+      </div>
+      {% endif %}
+
       <div class="grid gap-4 md:grid-cols-2">
         <div>
           <label class="text-sm font-semibold">Owner name *</label>

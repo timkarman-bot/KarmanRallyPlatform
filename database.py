@@ -153,6 +153,7 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN preset_vote_options TEXT NOT NULL DEFAULT '1,5,10,20,25'",
         "ALTER TABLE shows ADD COLUMN max_votes_per_checkout INTEGER NOT NULL DEFAULT 50",
         "ALTER TABLE shows ADD COLUMN allow_sponsorships INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE shows ADD COLUMN registration_slot_selection_mode TEXT NOT NULL DEFAULT 'single'",
     ]:
         try:
             cur.execute(sql)
@@ -275,6 +276,7 @@ def init_db() -> None:
         "ALTER TABLE registration_intents ADD COLUMN waiver_text_sha256 TEXT",
         "ALTER TABLE registration_intents ADD COLUMN waiver_template_id INTEGER",
         "ALTER TABLE registration_intents ADD COLUMN insurance_carrier TEXT",
+        "ALTER TABLE registration_intents ADD COLUMN registration_slot_ids TEXT",
     ]:
         try:
             cur.execute(sql)
@@ -311,10 +313,29 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_car_registration_slots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            show_car_id INTEGER NOT NULL,
+            registration_slot_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(show_car_id, registration_slot_id),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(show_car_id) REFERENCES show_cars(id),
+            FOREIGN KEY(registration_slot_id) REFERENCES show_registration_slots(id)
+        )
+        """
+    )
+
     for sql in [
         "CREATE INDEX IF NOT EXISTS idx_show_registration_slots_show_id ON show_registration_slots(show_id)",
         "CREATE INDEX IF NOT EXISTS idx_show_cars_registration_slot ON show_cars(show_id, registration_slot_id)",
         "CREATE INDEX IF NOT EXISTS idx_registration_intents_slot ON registration_intents(show_id, registration_slot_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_show ON show_car_registration_slots(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_car ON show_car_registration_slots(show_car_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_slot ON show_car_registration_slots(registration_slot_id)",
     ]:
         cur.execute(sql)
 
@@ -821,6 +842,7 @@ def create_show_admin(
     preset_vote_options: str = "1,5,10,20,25",
     max_votes_per_checkout: int = 50,
     allow_sponsorships: int = 1,
+    registration_slot_selection_mode: str = "single",
 ) -> int:
     conn = _conn()
     cur = conn.cursor()
@@ -847,9 +869,9 @@ def create_show_admin(
             cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
             waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
             venue_city, venue_state, venue_zip, charity_name, charity_description,
-            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships
+            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships, registration_slot_selection_mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slug.strip(),
@@ -896,6 +918,7 @@ def create_show_admin(
             (preset_vote_options or "1,5,10,20,25").strip(),
             int(max_votes_per_checkout or 50),
             1 if int(allow_sponsorships or 0) == 1 else 0,
+            normalize_registration_slot_selection_mode(registration_slot_selection_mode),
         ),
     )
     conn.commit()
@@ -949,6 +972,7 @@ def update_show_admin_record(
     preset_vote_options: str = "1,5,10,20,25",
     max_votes_per_checkout: int = 50,
     allow_sponsorships: int = 1,
+    registration_slot_selection_mode: str = "single",
 ) -> None:
     conn = _conn()
     conn.execute(
@@ -962,7 +986,7 @@ def update_show_admin_record(
             organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
             venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?,
             voting_mode = ?, payment_mode = ?, charity_processor_label = ?, external_payment_url = ?, allow_custom_votes = ?,
-            preset_vote_options = ?, max_votes_per_checkout = ?, allow_sponsorships = ?
+            preset_vote_options = ?, max_votes_per_checkout = ?, allow_sponsorships = ?, registration_slot_selection_mode = ?
         WHERE id = ?
         """,
         (
@@ -1008,6 +1032,7 @@ def update_show_admin_record(
             (preset_vote_options or "1,5,10,20,25").strip(),
             int(max_votes_per_checkout or 50),
             1 if int(allow_sponsorships or 0) == 1 else 0,
+            normalize_registration_slot_selection_mode(registration_slot_selection_mode),
             int(show_id),
         ),
     )
@@ -1082,19 +1107,136 @@ def _row_has_column(row: Any, column: str) -> bool:
         return False
 
 
+def normalize_registration_slot_selection_mode(value: str) -> str:
+    value = (value or "single").strip().lower()
+    return value if value in {"single", "multiple"} else "single"
+
+
+def get_show_registration_slot_selection_mode(show_id: int) -> str:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT registration_slot_selection_mode FROM shows WHERE id = ? LIMIT 1",
+        (int(show_id),),
+    ).fetchone()
+    conn.close()
+    if not row or "registration_slot_selection_mode" not in row.keys():
+        return "single"
+    return normalize_registration_slot_selection_mode(row["registration_slot_selection_mode"])
+
+
+def _normalize_slot_ids(slot_ids: Optional[List[int]]) -> List[int]:
+    out: List[int] = []
+    for raw in slot_ids or []:
+        try:
+            sid = int(raw)
+        except Exception:
+            continue
+        if sid > 0 and sid not in out:
+            out.append(sid)
+    return out
+
+
+def _slot_ids_json(slot_ids: Optional[List[int]]) -> str:
+    return json.dumps(_normalize_slot_ids(slot_ids))
+
+
+def _slot_ids_from_json(value: str) -> List[int]:
+    try:
+        data = json.loads(value or "[]")
+    except Exception:
+        data = []
+    return _normalize_slot_ids(data if isinstance(data, list) else [])
+
+
+def validate_registration_slot_ids(show_id: int, slot_ids: Optional[List[int]]) -> List[int]:
+    slot_ids = _normalize_slot_ids(slot_ids)
+    if not slot_ids:
+        return []
+    conn = _conn()
+    rows = conn.execute(
+        f"""
+        SELECT id
+        FROM show_registration_slots
+        WHERE show_id = ?
+          AND COALESCE(is_active, 1) = 1
+          AND id IN ({','.join(['?'] * len(slot_ids))})
+        ORDER BY sort_order ASC, id ASC
+        """,
+        [int(show_id)] + slot_ids,
+    ).fetchall()
+    conn.close()
+    valid = [int(r["id"]) for r in rows]
+    return [sid for sid in slot_ids if sid in valid]
+
+
+def selected_registration_slots_have_capacity(show_id: int, slot_ids: Optional[List[int]]) -> bool:
+    for slot_id in _normalize_slot_ids(slot_ids):
+        if not show_slot_has_capacity(show_id, slot_id):
+            return False
+    return True
+
+
+def save_show_car_registration_slots(show_id: int, show_car_id: int, slot_ids: Optional[List[int]]) -> None:
+    slot_ids = validate_registration_slot_ids(show_id, slot_ids)
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute("DELETE FROM show_car_registration_slots WHERE show_car_id = ?", (int(show_car_id),))
+        for slot_id in slot_ids:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO show_car_registration_slots (show_id, show_car_id, registration_slot_id)
+                VALUES (?, ?, ?)
+                """,
+                (int(show_id), int(show_car_id), int(slot_id)),
+            )
+        cur.execute(
+            "UPDATE show_cars SET registration_slot_id = ? WHERE id = ?",
+            (int(slot_ids[0]) if slot_ids else None, int(show_car_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def registration_slot_labels_for_car(show_car_id: int) -> str:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT GROUP_CONCAT(slot_label, ', ') AS labels
+        FROM (
+            SELECT DISTINCT s.slot_label, s.sort_order, s.id
+            FROM show_registration_slots s
+            JOIN show_car_registration_slots x ON x.registration_slot_id = s.id
+            WHERE x.show_car_id = ?
+            ORDER BY s.sort_order ASC, s.id ASC
+        )
+        """,
+        (int(show_car_id),),
+    ).fetchone()
+    conn.close()
+    return (row["labels"] if row else "") or ""
+
+
 def count_registered_cars_for_slot(show_id: int, registration_slot_id: Optional[int]) -> int:
     if not registration_slot_id:
         return 0
     conn = _conn()
     row = conn.execute(
         """
-        SELECT COUNT(*) AS cnt
-        FROM show_cars
-        WHERE show_id = ?
-          AND registration_slot_id = ?
-          AND COALESCE(is_placeholder, 0) = 0
+        SELECT COUNT(DISTINCT sc.id) AS cnt
+        FROM show_cars sc
+        LEFT JOIN show_car_registration_slots x
+          ON x.show_car_id = sc.id AND x.registration_slot_id = ?
+        WHERE sc.show_id = ?
+          AND COALESCE(sc.is_placeholder, 0) = 0
+          AND (sc.registration_slot_id = ? OR x.registration_slot_id IS NOT NULL)
         """,
-        (show_id, int(registration_slot_id)),
+        (int(registration_slot_id), show_id, int(registration_slot_id)),
     ).fetchone()
     conn.close()
     return int(row["cnt"] or 0)
@@ -1139,20 +1281,22 @@ def list_registration_slots(show_id: int, public_only: bool = False) -> List[sql
         f"""
         SELECT
             s.*,
-            COALESCE(COUNT(sc.id), 0) AS registered_count,
+            COALESCE(COUNT(DISTINCT sc.id), 0) AS registered_count,
             CASE
                 WHEN COALESCE(s.capacity, 0) <= 0 THEN NULL
-                ELSE MAX(COALESCE(s.capacity, 0) - COALESCE(COUNT(sc.id), 0), 0)
+                ELSE MAX(COALESCE(s.capacity, 0) - COALESCE(COUNT(DISTINCT sc.id), 0), 0)
             END AS remaining_count,
             CASE
-                WHEN COALESCE(s.capacity, 0) > 0 AND COALESCE(COUNT(sc.id), 0) >= COALESCE(s.capacity, 0) THEN 1
+                WHEN COALESCE(s.capacity, 0) > 0 AND COALESCE(COUNT(DISTINCT sc.id), 0) >= COALESCE(s.capacity, 0) THEN 1
                 ELSE 0
             END AS is_full
         FROM show_registration_slots s
+        LEFT JOIN show_car_registration_slots x
+            ON x.registration_slot_id = s.id
         LEFT JOIN show_cars sc
             ON sc.show_id = s.show_id
-           AND sc.registration_slot_id = s.id
            AND COALESCE(sc.is_placeholder, 0) = 0
+           AND (sc.id = x.show_car_id OR sc.registration_slot_id = s.id)
         {where}
         GROUP BY s.id
         ORDER BY s.sort_order ASC, s.id ASC
@@ -1280,6 +1424,7 @@ def update_show_admin_settings(
     max_votes_per_checkout: int = 50,
     waiver_text: str = "",
     waiver_version: str = "",
+    registration_slot_selection_mode: str = "single",
 ) -> None:
     st = (show_type or "full").strip().lower()
     if st in {"cruise-in", "cruisein"}:
@@ -1359,7 +1504,8 @@ def update_show_admin_settings(
             preset_vote_options = ?,
             max_votes_per_checkout = ?,
             waiver_text = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_text END,
-            waiver_version = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_version END
+            waiver_version = CASE WHEN TRIM(?) <> '' THEN ? ELSE waiver_version END,
+            registration_slot_selection_mode = ?
         WHERE id = ?
         """,
         (
@@ -1383,6 +1529,7 @@ def update_show_admin_settings(
             (waiver_text or "").strip(),
             (waiver_version or "").strip(),
             (waiver_version or "").strip(),
+            normalize_registration_slot_selection_mode(registration_slot_selection_mode),
             show_id,
         ),
     )
@@ -1558,8 +1705,19 @@ def get_show_car_private_by_token(show_id: int, car_token: str) -> Optional[sqli
             p.opt_in_future,
             p.sponsor_opt_in,
             p.consent_text,
-            p.consent_version
+            p.consent_version,
+            COALESCE((
+                SELECT GROUP_CONCAT(label, ', ')
+                FROM (
+                    SELECT DISTINCT s2.slot_label AS label, s2.sort_order, s2.id
+                    FROM show_registration_slots s2
+                    JOIN show_car_registration_slots x2 ON x2.registration_slot_id = s2.id
+                    WHERE x2.show_car_id = sc.id
+                    ORDER BY s2.sort_order ASC, s2.id ASC
+                )
+            ), slot.slot_label, '') AS registration_slot_labels
         FROM show_cars sc
+        LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
         JOIN people p ON p.id = sc.person_id
         WHERE sc.show_id = ? AND sc.car_token = ?
         LIMIT 1
@@ -1637,6 +1795,16 @@ def search_show_cars_admin(show_id: int, query: str) -> List[sqlite3.Row]:
             slot.start_time as slot_start_time,
             slot.end_time as slot_end_time,
             slot.participant_instructions as slot_participant_instructions,
+            COALESCE((
+                SELECT GROUP_CONCAT(label, ', ')
+                FROM (
+                    SELECT DISTINCT s2.slot_label AS label, s2.sort_order, s2.id
+                    FROM show_registration_slots s2
+                    JOIN show_car_registration_slots x2 ON x2.registration_slot_id = s2.id
+                    WHERE x2.show_car_id = sc.id
+                    ORDER BY s2.sort_order ASC, s2.id ASC
+                )
+            ), slot.slot_label, '') AS registration_slot_labels,
             p.name AS owner_name,
             p.phone AS owner_phone,
             p.email AS owner_email,
@@ -1733,6 +1901,16 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
             slot.start_time as slot_start_time,
             slot.end_time as slot_end_time,
             slot.participant_instructions as slot_participant_instructions,
+            COALESCE((
+                SELECT GROUP_CONCAT(label, ', ')
+                FROM (
+                    SELECT DISTINCT s2.slot_label AS label, s2.sort_order, s2.id
+                    FROM show_registration_slots s2
+                    JOIN show_car_registration_slots x2 ON x2.registration_slot_id = s2.id
+                    WHERE x2.show_car_id = sc.id
+                    ORDER BY s2.sort_order ASC, s2.id ASC
+                )
+            ), slot.slot_label, '') AS registration_slot_labels,
             p.name as owner_name
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id
@@ -1767,6 +1945,7 @@ def create_registration_intent(
     waiver_template_id: Optional[int] = None,
     reserved_car_number: Optional[int] = None,
     registration_slot_id: Optional[int] = None,
+    registration_slot_ids: Optional[List[int]] = None,
 ) -> Tuple[int, str, int]:
     conn = _conn()
     cur = conn.cursor()
@@ -1774,11 +1953,18 @@ def create_registration_intent(
     try:
         cur.execute("BEGIN IMMEDIATE")
 
+        slot_ids = _normalize_slot_ids(registration_slot_ids or ([registration_slot_id] if registration_slot_id else []))
+        mode = get_show_registration_slot_selection_mode(show_id)
+        if mode == "single" and len(slot_ids) > 1:
+            raise ValueError("Please select only one day/session for this show.")
+        slot_ids = validate_registration_slot_ids(show_id, slot_ids)
+        registration_slot_id = slot_ids[0] if slot_ids else None
+
         if show_has_registration_slots(show_id):
-            if not registration_slot_id:
+            if not slot_ids:
                 raise ValueError("Please select which day/session you are registering for.")
-            if not show_slot_has_capacity(show_id, registration_slot_id):
-                raise ValueError("That day/session has reached its maximum number of cars.")
+            if not selected_registration_slots_have_capacity(show_id, slot_ids):
+                raise ValueError("One of the selected days/sessions has reached its maximum number of cars.")
         elif not show_has_capacity(show_id):
             raise ValueError("This show has reached its maximum number of cars.")
 
@@ -1835,16 +2021,17 @@ def create_registration_intent(
         cur.execute(
             """
             INSERT INTO registration_intents (
-                show_id, registration_slot_id, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
+                show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
                 car_number, year, make, model, insurance_carrier,
                 waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                 waiver_template_id, amount_cents, payment_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 show_id,
                 int(registration_slot_id) if registration_slot_id else None,
+                _slot_ids_json(slot_ids),
                 token,
                 owner_name,
                 phone,
@@ -1937,12 +2124,16 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
             }
 
         show_id = int(ri["show_id"])
-        registration_slot_id = int(ri["registration_slot_id"]) if "registration_slot_id" in ri.keys() and ri["registration_slot_id"] else None
+        slot_ids = _slot_ids_from_json(ri["registration_slot_ids"] if "registration_slot_ids" in ri.keys() and ri["registration_slot_ids"] else "[]")
+        if not slot_ids and "registration_slot_id" in ri.keys() and ri["registration_slot_id"]:
+            slot_ids = [int(ri["registration_slot_id"])]
+        slot_ids = validate_registration_slot_ids(show_id, slot_ids)
+        registration_slot_id = slot_ids[0] if slot_ids else None
         if show_has_registration_slots(show_id):
-            if not registration_slot_id:
+            if not slot_ids:
                 raise ValueError("Please select which day/session you are registering for.")
-            if not show_slot_has_capacity(show_id, registration_slot_id):
-                raise ValueError("That day/session has reached its maximum number of cars.")
+            if not selected_registration_slots_have_capacity(show_id, slot_ids):
+                raise ValueError("One of the selected days/sessions has reached its maximum number of cars.")
         elif not show_has_capacity(show_id):
             raise ValueError("This show has reached its maximum number of cars.")
 
@@ -2075,6 +2266,15 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                 ),
             )
             show_car_id = int(cur.lastrowid)
+
+        for slot_id in slot_ids:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO show_car_registration_slots (show_id, show_car_id, registration_slot_id)
+                VALUES (?, ?, ?)
+                """,
+                (show_id, show_car_id, int(slot_id)),
+            )
 
         cur.execute(
             """

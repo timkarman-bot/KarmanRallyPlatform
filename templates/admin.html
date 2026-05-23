@@ -84,6 +84,15 @@
                 <label class="text-sm font-semibold">Maximum Cars</label>
                 <input name="max_cars" value="{% if show and show['max_cars'] %}{{ show['max_cars'] }}{% endif %}" placeholder="Leave blank for no max" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3">
               </div>
+              <div>
+                <label class="text-sm font-semibold">Day/Session Selection</label>
+                <select name="registration_slot_selection_mode" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3">
+                  {% set slot_mode = (show['registration_slot_selection_mode'] if show and 'registration_slot_selection_mode' in show.keys() else 'single') %}
+                  <option value="single" {% if slot_mode != 'multiple' %}selected{% endif %}>One only — radio buttons</option>
+                  <option value="multiple" {% if slot_mode == 'multiple' %}selected{% endif %}>Multiple allowed — checkboxes</option>
+                </select>
+                <div class="mt-1 text-xs text-slate-500">Use multiple for cruise-ins, drives, tech sessions, or multi-day activities.</div>
+              </div>
               <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div class="text-sm font-semibold text-slate-800">Current Capacity</div>
                 <div class="mt-1 text-sm text-slate-700">
