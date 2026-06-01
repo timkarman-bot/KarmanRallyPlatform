@@ -2548,7 +2548,36 @@ def admin_car_search():
         q=q,
         results=results,
     )
-    
+
+@app.get("/admin/debug-registration-slots")
+@require_admin
+def admin_debug_registration_slots():
+    conn = _conn_direct()
+    try:
+        rows = conn.execute("""
+            SELECT
+                sc.car_number,
+                p.name,
+                p.phone,
+                p.email,
+                sc.year || ' ' || sc.make || ' ' || sc.model AS vehicle,
+                GROUP_CONCAT(srs.slot_label, ', ') AS slots
+            FROM show_cars sc
+            LEFT JOIN people p ON p.id = sc.person_id
+            LEFT JOIN show_car_registration_slots scrs ON scrs.show_car_id = sc.id
+            LEFT JOIN show_registration_slots srs ON srs.id = scrs.registration_slot_id
+            GROUP BY sc.id
+            ORDER BY sc.car_number
+        """).fetchall()
+    finally:
+        conn.close()
+
+    html = "<h1>Registration Slots</h1><pre>"
+    for r in rows:
+        html += f"#{r['car_number']} | {r['name']} | {r['phone']} | {r['email']} | {r['vehicle']} | {r['slots']}\n"
+    html += "</pre>"
+    return html
+
 @app.get("/admin/command-center")
 @require_admin
 def admin_command_center():
