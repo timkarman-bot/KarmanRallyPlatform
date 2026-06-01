@@ -800,8 +800,21 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
             sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (int(ri["finalized_show_car_id"]),)).fetchone()
             conn.commit()
             return {"show_car_id": int(ri["finalized_show_car_id"]), "car_token": sc["car_token"] if sc else None, "already_finalized": True}
+        show_id = int(ri["show_id"])
+        slot_ids = []
 
+        if "registration_slot_ids" in ri.keys() and ri["registration_slot_ids"]:
+            try:
+                slot_ids = __import__("json").loads(ri["registration_slot_ids"] or "[]")
+            except Exception:
+                slot_ids = []
+
+        if not slot_ids and "registration_slot_id" in ri.keys() and ri["registration_slot_id"]:
+            slot_ids = [int(ri["registration_slot_id"])]
+
+        registration_slot_id = int(slot_ids[0]) if slot_ids else None
         sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (show_car_id,)).fetchone()
+
         if not sc:
             raise ValueError("Placeholder car not found.")
         person_id = int(sc["person_id"])
@@ -831,6 +844,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 make = ?,
                 model = ?,
                 insurance_carrier = ?,
+                registration_slot_id = ?,
                 registration_payment_status = 'paid',
                 registration_amount_cents = ?,
                 registration_session_id = ?,
@@ -849,6 +863,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 ri["make"],
                 ri["model"],
                 ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
+                registration_slot_id,
                 int(ri["amount_cents"] or 0),
                 stripe_session_id,
                 ri["waiver_signed_name"],
@@ -856,6 +871,15 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 show_car_id,
             ),
         )
+        cur.execute("DELETE FROM show_car_registration_slots WHERE show_car_id = ?", (show_car_id,))
+        for slot_id in slot_ids:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO show_car_registration_slots (show_id, show_car_id, registration_slot_id)
+                VALUES (?, ?, ?)
+                """,
+                (show_id, show_car_id, int(slot_id)),
+            )
 
         cur.execute(
             "UPDATE registration_intents SET payment_status = 'paid', paid_at = datetime('now'), finalized_show_car_id = ? WHERE id = ?",
@@ -886,6 +910,20 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
             conn.commit()
             return {"show_car_id": int(ri["finalized_show_car_id"]), "car_token": sc["car_token"] if sc else None, "already_finalized": True}
 
+        show_id = int(ri["show_id"])
+        slot_ids = []
+
+        if "registration_slot_ids" in ri.keys() and ri["registration_slot_ids"]:
+            try:
+                slot_ids = __import__("json").loads(ri["registration_slot_ids"] or "[]")
+            except Exception:
+                slot_ids = []
+
+        if not slot_ids and "registration_slot_id" in ri.keys() and ri["registration_slot_id"]:
+            slot_ids = [int(ri["registration_slot_id"])]
+
+        registration_slot_id = int(slot_ids[0]) if slot_ids else None
+
         sc = cur.execute("SELECT * FROM show_cars WHERE id = ? LIMIT 1", (show_car_id,)).fetchone()
         if not sc:
             raise ValueError("Placeholder car not found.")
@@ -901,20 +939,58 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
             """,
             (ri["owner_name"], ri["phone"], ri["email"], int(ri["opt_in_future"] or 0), int(ri["sponsor_opt_in"] or 0), CONSENT_TEXT_CAR_OWNER, CONSENT_VERSION, person_id),
         )
+
         cur.execute(
             """
             UPDATE show_cars
-            SET year = ?, make = ?, model = ?, insurance_carrier = ?,
+            SET year = ?,
+                make = ?,
+                model = ?,
+                insurance_carrier = ?,
+                registration_slot_id = ?,
                 registration_payment_status = 'cash_pending',
-                registration_amount_cents = ?, registration_session_id = ?,
-                waiver_signed_name = ?, waiver_signed_at = datetime('now'), waiver_version = ?,
-                waiver_text = ?, waiver_text_sha256 = ?, waiver_template_id = ?,
-                waiver_received = 1, waiver_received_at = datetime('now'), waiver_received_by = 'electronic',
-                is_placeholder = 0, registration_state = 'claimed / cash pending'
+                registration_amount_cents = ?,
+                registration_session_id = ?,
+                waiver_signed_name = ?,
+                waiver_signed_at = datetime('now'),
+                waiver_version = ?,
+                waiver_text = ?,
+                waiver_text_sha256 = ?,
+                waiver_template_id = ?,
+                waiver_received = 1,
+                waiver_received_at = datetime('now'),
+                waiver_received_by = 'electronic',
+                is_placeholder = 0,
+                registration_state = 'claimed / cash pending'
             WHERE id = ?
             """,
-            (ri["year"], ri["make"], ri["model"], ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "", int(ri["amount_cents"] or 0), f"cash_claim_{intent_token}", ri["waiver_signed_name"], ri["waiver_version"], ri["waiver_text"], ri["waiver_text_sha256"], ri["waiver_template_id"] if "waiver_template_id" in ri.keys() else None, show_car_id),
+            (
+                ri["year"],
+                ri["make"],
+                ri["model"],
+                ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
+                registration_slot_id,
+                int(ri["amount_cents"] or 0),
+                f"cash_claim_{intent_token}",
+                ri["waiver_signed_name"],
+                ri["waiver_version"],
+                ri["waiver_text"],
+                ri["waiver_text_sha256"],
+                ri["waiver_template_id"] if "waiver_template_id" in ri.keys() else None,
+                show_car_id,
+            ),
         )
+
+        cur.execute("DELETE FROM show_car_registration_slots WHERE show_car_id = ?", (show_car_id,))
+        for slot_id in slot_ids:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO show_car_registration_slots (show_id, show_car_id, registration_slot_id)
+                VALUES (?, ?, ?)
+                """,
+                (show_id, show_car_id, int(slot_id)),
+            )
+
         cur.execute(
             "UPDATE registration_intents SET payment_status = 'cash_pending', finalized_show_car_id = ? WHERE id = ?",
             (show_car_id, int(ri["id"])),
