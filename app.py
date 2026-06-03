@@ -109,6 +109,7 @@ from database import (
     search_show_cars_admin,
     get_show_car_admin_by_id,
     update_show_car_admin_registration,
+    remove_show_car_registration,
     get_vote_intent,
     finalize_external_vote_intent,
     list_pending_vote_reviews,
@@ -2673,6 +2674,45 @@ def admin_registration_edit_submit(show_car_id: int):
     return redirect(url_for("admin_registration_edit", show_car_id=show_car_id))
 
 
+@app.post("/admin/registration/<int:show_car_id>/remove")
+@require_admin
+def admin_registration_remove(show_car_id: int):
+    show = get_active_show()
+    if not show:
+        return "No active show.", 500
+
+    car = get_show_car_admin_by_id(int(show["id"]), int(show_car_id))
+    if not car:
+        return "Registration not found.", 404
+
+    confirm = request.form.get("confirm_remove", "").strip().lower()
+    if confirm != "yes":
+        flash("Removal was not completed. Check the confirmation box first.", "error")
+        return redirect(url_for("admin_registration_edit", show_car_id=show_car_id))
+
+    remove_show_car_registration(
+        show_id=int(show["id"]),
+        show_car_id=int(show_car_id),
+        removed_by="admin",
+    )
+
+    _log_event(
+        "admin.registration_removed",
+        int(show["id"]),
+        {
+            "show_car_id": int(show_car_id),
+            "car_number": int(car["car_number"]),
+            "previous_payment_status": car["registration_payment_status"],
+            "previous_registration_state": car["registration_state"] if "registration_state" in car.keys() else "",
+            "note": "Soft removed by admin. Spot opened for capacity counting.",
+        },
+        actor_type="admin",
+    )
+
+    flash("Registration removed. The spot is now open and this car no longer counts as coming.", "ok")
+    return redirect(url_for("admin_registration_edit", show_car_id=show_car_id))
+
+
 @app.get("/admin/debug-registration-slots")
 @require_admin
 def admin_debug_registration_slots():
@@ -3333,6 +3373,8 @@ def admin_show_mode():
             JOIN people p ON p.id = sc.person_id
             LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
             WHERE sc.show_id = ?
+              AND COALESCE(sc.registration_state, '') != 'removed'
+              AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
             ORDER BY sc.car_number ASC
             """,
             (int(show["id"]),),

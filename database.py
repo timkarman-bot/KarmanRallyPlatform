@@ -1077,6 +1077,8 @@ def count_registered_cars(show_id: int) -> int:
         FROM show_cars
         WHERE show_id = ?
           AND COALESCE(is_placeholder, 0) = 0
+          AND COALESCE(registration_state, '') != 'removed'
+          AND COALESCE(registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
         """,
         (show_id,),
     ).fetchone()
@@ -1234,6 +1236,8 @@ def count_registered_cars_for_slot(show_id: int, registration_slot_id: Optional[
           ON x.show_car_id = sc.id AND x.registration_slot_id = ?
         WHERE sc.show_id = ?
           AND COALESCE(sc.is_placeholder, 0) = 0
+          AND COALESCE(sc.registration_state, '') != 'removed'
+          AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
           AND (sc.registration_slot_id = ? OR x.registration_slot_id IS NOT NULL)
         """,
         (int(registration_slot_id), show_id, int(registration_slot_id)),
@@ -1296,6 +1300,8 @@ def list_registration_slots(show_id: int, public_only: bool = False) -> List[sql
         LEFT JOIN show_cars sc
             ON sc.show_id = s.show_id
            AND COALESCE(sc.is_placeholder, 0) = 0
+           AND COALESCE(sc.registration_state, '') != 'removed'
+           AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
            AND (sc.id = x.show_car_id OR sc.registration_slot_id = s.id)
         {where}
         GROUP BY s.id
@@ -1957,6 +1963,7 @@ def update_show_car_admin_registration(
             "comped",
             "canceled",
             "refunded",
+            "removed",
             "placeholder",
         }
         payment_status = (registration_payment_status or "").strip()
@@ -2023,6 +2030,46 @@ def update_show_car_admin_registration(
         conn.close()
 
 
+
+def remove_show_car_registration(*, show_id: int, show_car_id: int, removed_by: str = "admin") -> None:
+    """Soft-remove a registration so it no longer counts toward show or slot capacity.
+
+    This keeps the car/person record for history and audit, but clears selected slots,
+    check-in state, and marks the registration as removed.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        car = cur.execute(
+            "SELECT * FROM show_cars WHERE show_id = ? AND id = ? LIMIT 1",
+            (int(show_id), int(show_car_id)),
+        ).fetchone()
+        if not car:
+            raise ValueError("Car registration not found.")
+
+        cur.execute(
+            "DELETE FROM show_car_registration_slots WHERE show_id = ? AND show_car_id = ?",
+            (int(show_id), int(show_car_id)),
+        )
+        cur.execute(
+            """
+            UPDATE show_cars
+            SET registration_state = 'removed',
+                registration_payment_status = 'removed',
+                registration_slot_id = NULL,
+                checked_in_at = NULL
+            WHERE show_id = ? AND id = ?
+            """,
+            (int(show_id), int(show_car_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
     conn = _conn()
     rows = conn.execute(
@@ -2066,6 +2113,8 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
         WHERE sc.show_id = ?
+          AND COALESCE(sc.registration_state, '') != 'removed'
+          AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
         ORDER BY sc.car_number ASC
         """,
         (show_id,),

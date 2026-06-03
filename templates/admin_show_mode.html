@@ -19,8 +19,8 @@
 
   <div class="grid gap-4 md:grid-cols-4">
     <div class="rounded-3xl bg-white border border-slate-200 p-5">
-      <div class="text-xs text-slate-500 font-semibold">TOTAL CARDS</div>
-      <div class="mt-1 text-3xl font-semibold">{{ cars|length }}</div>
+      <div class="text-xs text-slate-500 font-semibold">CARS COMING</div>
+      <div class="mt-1 text-3xl font-semibold">{{ cars|rejectattr('is_placeholder', 'equalto', 1)|list|length }}</div>
     </div>
     <div class="rounded-3xl bg-white border border-slate-200 p-5">
       <div class="text-xs text-slate-500 font-semibold">PLACEHOLDERS OPEN</div>

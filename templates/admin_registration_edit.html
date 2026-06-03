@@ -31,6 +31,13 @@
     {% endif %}
   {% endwith %}
 
+  {% if car['registration_payment_status'] == 'removed' or car['registration_state'] == 'removed' %}
+    <div class="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800">
+      <div class="font-semibold">This registration has been removed.</div>
+      <div class="mt-1 text-sm">It is kept for history, but it does not count as a car coming and does not hold a day/session slot.</div>
+    </div>
+  {% endif %}
+
   <form method="POST" class="mt-6 rounded-3xl bg-white border border-slate-200 shadow-sm p-6 space-y-6">
     <div>
       <div class="text-xs font-semibold text-slate-500">OWNER</div>
@@ -79,7 +86,7 @@
           <label class="text-sm font-semibold">Payment / registration status</label>
           <select name="registration_payment_status" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3">
             {% set current_status = car['registration_payment_status'] or '' %}
-            {% for status in ['paid', 'paid_cash', 'pending', 'cash_pending', 'manual_paid', 'comped', 'canceled', 'refunded', 'placeholder'] %}
+            {% for status in ['paid', 'paid_cash', 'pending', 'cash_pending', 'manual_paid', 'comped', 'canceled', 'refunded', 'removed', 'placeholder'] %}
               <option value="{{ status }}" {% if current_status == status %}selected{% endif %}>{{ status }}</option>
             {% endfor %}
           </select>
@@ -139,5 +146,31 @@
       <a class="btn btn-outline" href="{{ url_for('admin_car_search') }}">Cancel</a>
     </div>
   </form>
+
+  <div class="mt-6 rounded-3xl bg-white border border-red-200 shadow-sm p-6">
+    <div class="text-xs font-semibold text-red-600">REMOVE / OPEN SPOT</div>
+    <h2 class="mt-1 text-xl font-semibold text-slate-900">Remove this registration</h2>
+    <p class="mt-2 text-sm text-slate-600">
+      This does not delete the record. It marks the registration as removed, clears selected day/session slots,
+      removes any check-in status, and opens the spot for another car. Stripe charges or refunds are not changed.
+    </p>
+
+    {% if car['registration_payment_status'] == 'removed' or car['registration_state'] == 'removed' %}
+      <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        This registration is already removed.
+      </div>
+    {% else %}
+      <form method="POST" action="{{ url_for('admin_registration_remove', show_car_id=car['id']) }}" class="mt-4 space-y-4">
+        <label class="flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+          <input type="checkbox" name="confirm_remove" value="yes" class="mt-1">
+          <span>I understand this will remove this car from the coming count and open the spot.</span>
+        </label>
+        <button class="rounded-2xl bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-700" type="submit">
+          Remove Registration / Open Spot
+        </button>
+      </form>
+    {% endif %}
+  </div>
+
 </div>
 {% endblock %}
