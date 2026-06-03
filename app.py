@@ -107,6 +107,8 @@ from database import (
     get_effective_waiver_template_for_show,
     get_next_available_car_number,
     search_show_cars_admin,
+    get_show_car_admin_by_id,
+    update_show_car_admin_registration,
     get_vote_intent,
     finalize_external_vote_intent,
     list_pending_vote_reviews,
@@ -2549,6 +2551,128 @@ def admin_car_search():
         results=results,
     )
 
+@app.get("/admin/registration/<int:show_car_id>/edit")
+@require_admin
+def admin_registration_edit(show_car_id: int):
+    show = get_active_show()
+    if not show:
+        return "No active show.", 500
+
+    car = get_show_car_admin_by_id(int(show["id"]), int(show_car_id))
+    if not car:
+        return "Registration not found.", 404
+
+    slots = list_registration_slots(int(show["id"]), public_only=False)
+
+    selected_slot_ids = []
+    conn = _conn_direct()
+    try:
+        rows = conn.execute(
+            """
+            SELECT registration_slot_id
+            FROM show_car_registration_slots
+            WHERE show_id = ? AND show_car_id = ?
+            ORDER BY registration_slot_id ASC
+            """,
+            (int(show["id"]), int(show_car_id)),
+        ).fetchall()
+        selected_slot_ids = [int(r["registration_slot_id"]) for r in rows]
+    finally:
+        conn.close()
+
+    if not selected_slot_ids and car["registration_slot_id"]:
+        selected_slot_ids = [int(car["registration_slot_id"])]
+
+    return render_template(
+        "admin_registration_edit.html",
+        show=show,
+        car=car,
+        slots=slots,
+        selected_slot_ids=selected_slot_ids,
+    )
+
+
+@app.post("/admin/registration/<int:show_car_id>/edit")
+@require_admin
+def admin_registration_edit_submit(show_car_id: int):
+    show = get_active_show()
+    if not show:
+        return "No active show.", 500
+
+    car = get_show_car_admin_by_id(int(show["id"]), int(show_car_id))
+    if not car:
+        return "Registration not found.", 404
+
+    owner_name = request.form.get("owner_name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    year = request.form.get("year", "").strip()
+    make = request.form.get("make", "").strip()
+    model = request.form.get("model", "").strip()
+    insurance_carrier = request.form.get("insurance_carrier", "").strip()
+    registration_payment_status = request.form.get("registration_payment_status", "").strip()
+
+    raw_slot_ids = request.form.getlist("registration_slot_ids")
+    slot_ids = []
+    for raw in raw_slot_ids:
+        raw = str(raw or "").strip()
+        if raw.isdigit():
+            slot_id = int(raw)
+            if slot_id not in slot_ids:
+                slot_ids.append(slot_id)
+
+    if not (owner_name and phone and email and year and make and model):
+        slots = list_registration_slots(int(show["id"]), public_only=False)
+        return render_template(
+            "admin_registration_edit.html",
+            show=show,
+            car=car,
+            slots=slots,
+            selected_slot_ids=slot_ids,
+            error="Owner name, phone, email, year, make, and model are required.",
+        )
+
+    try:
+        update_show_car_admin_registration(
+            show_id=int(show["id"]),
+            show_car_id=int(show_car_id),
+            owner_name=owner_name,
+            phone=phone,
+            email=email,
+            year=year,
+            make=make,
+            model=model,
+            insurance_carrier=insurance_carrier,
+            registration_payment_status=registration_payment_status,
+            registration_slot_ids=slot_ids,
+        )
+    except ValueError as e:
+        slots = list_registration_slots(int(show["id"]), public_only=False)
+        return render_template(
+            "admin_registration_edit.html",
+            show=show,
+            car=car,
+            slots=slots,
+            selected_slot_ids=slot_ids,
+            error=str(e),
+        )
+
+    _log_event(
+        "admin.registration_edited",
+        int(show["id"]),
+        {
+            "show_car_id": int(show_car_id),
+            "car_number": int(car["car_number"]),
+            "payment_status": registration_payment_status,
+            "slot_ids": slot_ids,
+        },
+        actor_type="admin",
+    )
+
+    flash("Registration updated.", "ok")
+    return redirect(url_for("admin_registration_edit", show_car_id=show_car_id))
+
+
 @app.get("/admin/debug-registration-slots")
 @require_admin
 def admin_debug_registration_slots():
@@ -3184,9 +3308,30 @@ def admin_show_mode():
     try:
         rows = conn.execute(
             """
-            SELECT sc.*, p.name AS owner_name, p.phone AS owner_phone, p.email AS owner_email
+            SELECT
+                sc.*,
+                p.name AS owner_name,
+                p.phone AS owner_phone,
+                p.email AS owner_email,
+                slot.slot_label,
+                slot.slot_date,
+                slot.cars_arrive_time AS slot_cars_arrive_time,
+                slot.start_time AS slot_start_time,
+                slot.end_time AS slot_end_time,
+                slot.participant_instructions AS slot_participant_instructions,
+                COALESCE((
+                    SELECT GROUP_CONCAT(label, ', ')
+                    FROM (
+                        SELECT DISTINCT s2.slot_label AS label, s2.sort_order, s2.id
+                        FROM show_registration_slots s2
+                        JOIN show_car_registration_slots x2 ON x2.registration_slot_id = s2.id
+                        WHERE x2.show_car_id = sc.id
+                        ORDER BY s2.sort_order ASC, s2.id ASC
+                    )
+                ), slot.slot_label, '') AS registration_slot_labels
             FROM show_cars sc
             JOIN people p ON p.id = sc.person_id
+            LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
             WHERE sc.show_id = ?
             ORDER BY sc.car_number ASC
             """,

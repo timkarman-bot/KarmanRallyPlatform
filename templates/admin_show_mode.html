@@ -75,7 +75,7 @@
               <div class="text-xs text-slate-500">{{ car['owner_phone'] or '' }}</div>
             </td>
             <td class="py-3 pr-4">
-              <div>{{ car['slot_label'] or '—' }}</div>
+              <div>{{ car['registration_slot_labels'] if 'registration_slot_labels' in car.keys() and car['registration_slot_labels'] else (car['slot_label'] or '—') }}</div>
               {% if car['slot_date'] or car['slot_cars_arrive_time'] or car['slot_start_time'] or car['slot_end_time'] %}
                 <div class="text-xs text-slate-500">
                   {{ car['slot_date'] or '' }}
@@ -96,6 +96,8 @@
             </td>
             <td class="py-3 pr-4">
               <div class="flex flex-wrap gap-2">
+                <a class="btn btn-outline" href="{{ url_for('admin_registration_edit', show_car_id=car['id']) }}">Edit</a>
+
                 {% if car['is_placeholder'] == 1 %}
                   <a class="btn btn-outline" href="{{ url_for('placeholder_claim_page', show_slug=show['slug'], car_token=car['car_token']) }}" target="_blank">Claim</a>
                 {% else %}

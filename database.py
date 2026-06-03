@@ -1873,6 +1873,156 @@ def search_show_cars_admin(show_id: int, query: str) -> List[sqlite3.Row]:
     conn.close()
     return rows
 
+def get_show_car_admin_by_id(show_id: int, show_car_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT
+            sc.*,
+            p.name AS owner_name,
+            p.phone AS owner_phone,
+            p.email AS owner_email,
+            p.opt_in_future,
+            p.sponsor_opt_in,
+            slot.slot_label,
+            slot.slot_date,
+            slot.cars_arrive_time AS slot_cars_arrive_time,
+            slot.start_time AS slot_start_time,
+            slot.end_time AS slot_end_time,
+            slot.participant_instructions AS slot_participant_instructions,
+            COALESCE((
+                SELECT GROUP_CONCAT(label, ', ')
+                FROM (
+                    SELECT DISTINCT s2.slot_label AS label, s2.sort_order, s2.id
+                    FROM show_registration_slots s2
+                    JOIN show_car_registration_slots x2 ON x2.registration_slot_id = s2.id
+                    WHERE x2.show_car_id = sc.id
+                    ORDER BY s2.sort_order ASC, s2.id ASC
+                )
+            ), slot.slot_label, '') AS registration_slot_labels
+        FROM show_cars sc
+        JOIN people p ON p.id = sc.person_id
+        LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
+        WHERE sc.show_id = ? AND sc.id = ?
+        LIMIT 1
+        """,
+        (int(show_id), int(show_car_id)),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def update_show_car_admin_registration(
+    *,
+    show_id: int,
+    show_car_id: int,
+    owner_name: str,
+    phone: str,
+    email: str,
+    year: str,
+    make: str,
+    model: str,
+    insurance_carrier: str = "",
+    registration_payment_status: str = "",
+    registration_slot_ids: Optional[List[int]] = None,
+) -> None:
+    conn = _conn()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+
+        car = cur.execute(
+            "SELECT * FROM show_cars WHERE show_id = ? AND id = ? LIMIT 1",
+            (int(show_id), int(show_car_id)),
+        ).fetchone()
+
+        if not car:
+            raise ValueError("Car registration not found.")
+
+        person_id = int(car["person_id"])
+        slot_ids = _normalize_slot_ids(registration_slot_ids or [])
+        mode = get_show_registration_slot_selection_mode(int(show_id))
+        if mode == "single" and len(slot_ids) > 1:
+            raise ValueError("This show only allows one selected day/session for each registration.")
+        slot_ids = validate_registration_slot_ids(int(show_id), slot_ids) if slot_ids else []
+        primary_slot_id = int(slot_ids[0]) if slot_ids else None
+
+        valid_statuses = {
+            "paid",
+            "paid_cash",
+            "pending",
+            "cash_pending",
+            "manual_paid",
+            "comped",
+            "canceled",
+            "refunded",
+            "placeholder",
+        }
+        payment_status = (registration_payment_status or "").strip()
+        if payment_status not in valid_statuses:
+            payment_status = car["registration_payment_status"] or "pending"
+
+        cur.execute(
+            """
+            UPDATE people
+            SET name = ?, phone = ?, email = ?
+            WHERE id = ?
+            """,
+            (
+                (owner_name or "").strip(),
+                (phone or "").strip(),
+                (email or "").strip().lower(),
+                person_id,
+            ),
+        )
+
+        cur.execute(
+            """
+            UPDATE show_cars
+            SET year = ?,
+                make = ?,
+                model = ?,
+                insurance_carrier = ?,
+                registration_payment_status = ?,
+                registration_slot_id = ?
+            WHERE id = ? AND show_id = ?
+            """,
+            (
+                (year or "").strip(),
+                (make or "").strip(),
+                (model or "").strip(),
+                (insurance_carrier or "").strip(),
+                payment_status,
+                primary_slot_id,
+                int(show_car_id),
+                int(show_id),
+            ),
+        )
+
+        cur.execute(
+            "DELETE FROM show_car_registration_slots WHERE show_id = ? AND show_car_id = ?",
+            (int(show_id), int(show_car_id)),
+        )
+
+        for slot_id in slot_ids:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO show_car_registration_slots
+                    (show_id, show_car_id, registration_slot_id)
+                VALUES (?, ?, ?)
+                """,
+                (int(show_id), int(show_car_id), int(slot_id)),
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
     conn = _conn()
     rows = conn.execute(

@@ -43,6 +43,7 @@
             <th class="text-left py-2">Day(s) / Session(s)</th>
             <th class="text-left py-2">Status</th>
             <th class="text-left py-2">Check-In</th>
+            <th class="text-left py-2">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -55,13 +56,17 @@
               <td class="py-3">{{ c["year"] }} {{ c["make"] }} {{ c["model"] }}</td>
               <td class="py-3">{{ c["registration_slot_labels"] if "registration_slot_labels" in c.keys() and c["registration_slot_labels"] else (c["slot_label"] if "slot_label" in c.keys() and c["slot_label"] else "—") }}</td>
               <td class="py-3">
-                {% if c["registration_payment_status"] == "paid" %}
+                {% if c["registration_payment_status"] in ["paid", "paid_cash", "manual_paid", "comped"] %}
                   <span class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
                     Registered
                   </span>
+                {% elif c["registration_payment_status"] == "canceled" %}
+                  <span class="px-3 py-1 rounded-full bg-red-50 text-red-800 border border-red-200 text-xs font-semibold">
+                    Canceled
+                  </span>
                 {% else %}
                   <span class="px-3 py-1 rounded-full bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold">
-                    Placeholder
+                    {{ c["registration_payment_status"] or "Placeholder" }}
                   </span>
                 {% endif %}
               </td>
@@ -74,10 +79,15 @@
                   <span class="text-slate-500">Not checked in</span>
                 {% endif %}
               </td>
+              <td class="py-3">
+                <a class="btn btn-outline" href="{{ url_for('admin_registration_edit', show_car_id=c['id']) }}">
+                  Edit
+                </a>
+              </td>
             </tr>
           {% else %}
             <tr>
-              <td class="py-6 text-slate-500" colspan="8">No matching cars found.</td>
+              <td class="py-6 text-slate-500" colspan="9">No matching cars found.</td>
             </tr>
           {% endfor %}
         </tbody>
