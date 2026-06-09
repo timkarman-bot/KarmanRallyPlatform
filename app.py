@@ -247,7 +247,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.8.1-beta"
+APP_VERSION = "0.8.4-beta"
 APP_RELEASE_STAGE = "beta"
 APP_RELEASE_NAME = "Multi-Show Registration Picker Beta"
 
@@ -1306,6 +1306,62 @@ def show_page(slug: str):
         registration_slots=_registration_slots_for_public(int(show["id"])),
     )
 
+def _registration_availability(show: Any) -> Dict[str, Any]:
+    """Return public registration availability for one show.
+
+    This keeps the /register picker, direct /register/<slug> page, and final
+    POST protection using the same rules.
+    """
+    if not show:
+        return {
+            "can_register": False,
+            "status": "closed",
+            "label": "Registration unavailable",
+            "message": "This show is not available.",
+        }
+
+    if not prereg_allowed(show):
+        return {
+            "can_register": False,
+            "status": "closed",
+            "label": "Registration closed",
+            "message": "Pre-registration has been closed by the event administrator or this event is using a day-of registration workflow.",
+        }
+
+    show_id = int(show["id"])
+    slots = _registration_slots_for_public(show_id)
+    if slots:
+        open_slots = [slot for slot in slots if int(slot["is_full"] or 0) != 1]
+        if not open_slots:
+            return {
+                "can_register": False,
+                "status": "full",
+                "label": "Registration full",
+                "message": "All available registration days/sessions for this show are full.",
+            }
+        return {
+            "can_register": True,
+            "status": "open",
+            "label": "Register",
+            "message": "Pre-registration is open.",
+        }
+
+    if not show_has_capacity(show_id):
+        return {
+            "can_register": False,
+            "status": "full",
+            "label": "Registration full",
+            "message": "This show has reached its maximum number of cars.",
+        }
+
+    return {
+        "can_register": True,
+        "status": "open",
+        "label": "Register",
+        "message": "Pre-registration is open.",
+    }
+
+
 def _registration_show_or_response(show_slug: Optional[str] = None):
     """Return the selected show for registration, or a Flask response tuple.
 
@@ -1322,9 +1378,32 @@ def _registration_show_or_response(show_slug: Optional[str] = None):
         if not show:
             return None, ("No active show configured.", 500)
     show = _show_with_rendered_waiver(show)
-    if not prereg_allowed(show):
-        return None, (render_template("registration_closed.html", show=show), 403)
+    availability = _registration_availability(show)
+    if not availability["can_register"]:
+        return None, (
+            render_template(
+                "registration_closed.html",
+                show=show,
+                error=availability["message"],
+                registration_status=availability["status"],
+            ),
+            403,
+        )
     return show, None
+
+
+def _public_registration_show_cards() -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for row in list_public_registerable_shows():
+        show_dict = {k: row[k] for k in row.keys()}
+        availability = _registration_availability(row)
+        show_dict["registration_availability"] = availability
+        show_dict["can_register"] = bool(availability["can_register"])
+        show_dict["registration_status"] = availability["status"]
+        show_dict["registration_label"] = availability["label"]
+        show_dict["registration_message"] = availability["message"]
+        cards.append(show_dict)
+    return cards
 
 
 @app.get("/register")
@@ -1336,7 +1415,7 @@ def register_page():
     page lets the visitor pick the correct event without scrolling through all
     show details.
     """
-    shows = list_public_registerable_shows()
+    shows = _public_registration_show_cards()
     return render_template("register_picker.html", shows=shows)
 
 
