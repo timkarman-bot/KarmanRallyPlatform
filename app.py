@@ -242,6 +242,13 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
     "and votes are counted after payment verification."
 )
 
+# ==========================================================
+# Version Information
+# ==========================================================
+
+APP_VERSION = "0.8.1-beta"
+APP_RELEASE_STAGE = "beta"
+APP_RELEASE_NAME = "Show Management / Claimable Placeholder Beta"
 
 def prereg_allowed(show) -> bool:
     if not show:
@@ -2561,6 +2568,16 @@ def sponsorship_checkout_success(sale_id: int):
 
     flash("Payment received. Stripe will send your receipt automatically.", "ok")
     return redirect(url_for("sponsorship.public_sponsorship_page", show_slug=show["slug"]))
+
+@app.get("/admin/version")
+@require_admin
+def admin_version():
+    return jsonify({
+        "app": "Karman Kar Shows Platform",
+        "version": APP_VERSION,
+        "release_stage": APP_RELEASE_STAGE,
+        "release_name": APP_RELEASE_NAME,
+    })
 
 @app.get("/admin")
 def admin_page():
