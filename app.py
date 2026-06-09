@@ -246,7 +246,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.8.1-beta"
+APP_VERSION = "0.8.3-beta"
 APP_RELEASE_STAGE = "beta"
 APP_RELEASE_NAME = "Show Management / Claimable Placeholder Beta"
 
