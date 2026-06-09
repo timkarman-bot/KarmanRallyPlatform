@@ -130,6 +130,17 @@
         <div class="mt-1 text-xs text-slate-500">Use Participant/Judge restricted voting for one-vote-per-category participant judging. Use None for Cruise In or no-awards events.</div>
       </div>
 
+      <div class="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <label class="flex items-start gap-3 text-sm">
+          <input type="checkbox" name="participant_voting_enabled" class="mt-1"
+            {% if (s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') == 'participant_restricted' %}checked{% endif %}>
+          <span>
+            <span class="block font-semibold text-slate-900">Enable participant/judge access controls for this show</span>
+            <span class="block text-slate-600">Use this when only registered participants, staff-issued judges, or approved voters should be able to vote. Shows that do not use restricted judging can leave this off.</span>
+          </span>
+        </label>
+      </div>
+
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Voting Payment Mode</label>
         <select name="payment_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
@@ -399,7 +410,7 @@
           <div>
             <h3 class="text-lg font-semibold text-slate-900">Registration Day / Session</h3>
             <p class="mt-1 text-sm text-slate-600">
-              Most shows only need one registration day. Add more only when the event has multiple days, sessions, activities, or separate capacity limits.
+              Default is a single show day. Leave this blank unless you need a separate registration day, session, activity, or capacity limit.
             </p>
           </div>
           <button type="button" id="addSlotBtn" class="btn btn-outline whitespace-nowrap">Add another day/session</button>
@@ -411,37 +422,48 @@
             <option value="single" {% if existing_slot_mode != 'multiple' %}selected{% endif %}>One only — radio buttons</option>
             <option value="multiple" {% if existing_slot_mode == 'multiple' %}selected{% endif %}>Multiple allowed — checkboxes</option>
           </select>
-          <div class="mt-1 text-xs text-slate-500">Default is one day/session. Use multiple only for multi-day events, tours, tech sessions, or optional activities.</div>
+          <div class="mt-1 text-xs text-slate-500">Use multiple only for multi-day events, tours, tech sessions, or optional activities.</div>
         </div>
         {% set existing_slots = slots_by_show.get(s['id'], []) if slots_by_show else [] %}
         <div class="mt-4 grid gap-3" id="registrationSlotsBox">
           {% for i in range(1, 6) %}
           {% set slot = existing_slots[i-1] if existing_slots|length >= i else None %}
-          <div class="slot-row grid grid-cols-1 md:grid-cols-7 gap-3 rounded-2xl bg-white border border-blue-100 p-3 {% if i > 1 and not slot %}hidden{% endif %}" data-slot-index="{{ i }}">
-            <input type="hidden" name="slot_{{ i }}_id" value="{{ slot['id'] if slot else '' }}">
+          {% set slot_has_content = slot and (
+            (slot['slot_label'] or '')|trim
+            or (slot['slot_date'] or '')|trim
+            or (slot['cars_arrive_time'] or '')|trim
+            or (slot['start_time'] or '')|trim
+            or (slot['end_time'] or '')|trim
+            or (slot['participant_instructions'] or '')|trim
+            or (slot['capacity'] or 0)
+            or (slot['registered_count'] or 0)
+          ) %}
+          {% set row_visible = (i == 1) or slot_has_content %}
+          <div class="slot-row grid grid-cols-1 md:grid-cols-7 gap-3 rounded-2xl bg-white border border-blue-100 p-3 {% if not row_visible %}hidden{% endif %}" data-slot-index="{{ i }}">
+            <input class="slot-field" type="hidden" name="slot_{{ i }}_id" value="{{ slot['id'] if slot else '' }}" {% if not row_visible %}disabled{% endif %}>
             <div class="md:col-span-2">
               <label class="block text-xs font-semibold text-slate-600 mb-1">Label</label>
-              <input name="slot_{{ i }}_label" value="{{ slot['slot_label'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Main show day">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_label" value="{{ slot['slot_label'] if slot else '' }}" placeholder="Main show day" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Date</label>
-              <input name="slot_{{ i }}_date" value="{{ slot['slot_date'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Event date">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_date" value="{{ slot['slot_date'] if slot else '' }}" placeholder="Event date" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Arrival Time</label>
-              <input name="slot_{{ i }}_cars_arrive_time" value="{{ slot['cars_arrive_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Arrival time">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_cars_arrive_time" value="{{ slot['cars_arrive_time'] if slot else '' }}" placeholder="Arrival time" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Start</label>
-              <input name="slot_{{ i }}_start_time" value="{{ slot['start_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Start time">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_start_time" value="{{ slot['start_time'] if slot else '' }}" placeholder="Start time" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">End</label>
-              <input name="slot_{{ i }}_end_time" value="{{ slot['end_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="End time">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_end_time" value="{{ slot['end_time'] if slot else '' }}" placeholder="End time" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Cap</label>
-              <input name="slot_{{ i }}_capacity" value="{{ slot['capacity'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Optional cap">
+              <input class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_capacity" value="{{ slot['capacity'] if slot and slot['capacity'] else '' }}" placeholder="Optional cap" {% if not row_visible %}disabled{% endif %}>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Filled</label>
@@ -451,10 +473,18 @@
             </div>
             <div class="md:col-span-7">
               <label class="block text-xs font-semibold text-slate-600 mb-1">Participant Instructions</label>
-              <textarea name="slot_{{ i }}_participant_instructions" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Optional instructions for this day/session. Example: Enter from the north lot.">{{ slot['participant_instructions'] if slot else '' }}</textarea>
+              <textarea class="slot-field w-full rounded-xl border border-slate-200 px-3 py-2" name="slot_{{ i }}_participant_instructions" rows="2" placeholder="Optional instructions for this day/session. Example: Enter from the north lot." {% if not row_visible %}disabled{% endif %}>{{ slot['participant_instructions'] if slot else '' }}</textarea>
             </div>
-            <input type="hidden" name="slot_{{ i }}_sort_order" value="{{ slot['sort_order'] if slot else i * 10 }}">
-            <label class="md:col-span-7 flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" name="slot_{{ i }}_is_active" {% if not slot or slot['is_active'] == 1 %}checked{% endif %}> Active / visible to public registration</label>
+            <input class="slot-field" type="hidden" name="slot_{{ i }}_sort_order" value="{{ slot['sort_order'] if slot else i * 10 }}" {% if not row_visible %}disabled{% endif %}>
+            <div class="md:col-span-7 flex flex-wrap items-center justify-between gap-3">
+              <label class="flex items-center gap-2 text-xs text-slate-700">
+                <input class="slot-field" type="checkbox" name="slot_{{ i }}_is_active" {% if not slot or slot['is_active'] == 1 %}checked{% endif %} {% if not row_visible %}disabled{% endif %}>
+                Active / visible to public registration
+              </label>
+              {% if i > 1 %}
+              <button type="button" class="clear-slot-btn text-xs font-semibold text-red-700 underline">Remove this day/session</button>
+              {% endif %}
+            </div>
           </div>
           {% endfor %}
         </div>
@@ -463,14 +493,37 @@
             const btn = document.getElementById("addSlotBtn");
             const rows = Array.from(document.querySelectorAll(".slot-row"));
             if (!btn || !rows.length) return;
+            function setRowEnabled(row, enabled) {
+              row.querySelectorAll(".slot-field").forEach(el => { el.disabled = !enabled; });
+            }
+            function showRow(row) {
+              row.classList.remove("hidden");
+              setRowEnabled(row, true);
+            }
+            function hideAndClearRow(row) {
+              row.querySelectorAll("input[type='text'], input:not([type]), textarea").forEach(el => { el.value = ""; });
+              row.querySelectorAll("input[type='checkbox']").forEach(el => { el.checked = false; });
+              row.classList.add("hidden");
+              setRowEnabled(row, false);
+            }
             function updateButton() {
               const hidden = rows.filter(row => row.classList.contains("hidden"));
               btn.style.display = hidden.length ? "inline-flex" : "none";
             }
+            rows.forEach(row => setRowEnabled(row, !row.classList.contains("hidden")));
             btn.addEventListener("click", function () {
               const next = rows.find(row => row.classList.contains("hidden"));
-              if (next) next.classList.remove("hidden");
+              if (next) showRow(next);
               updateButton();
+            });
+            document.querySelectorAll(".clear-slot-btn").forEach(clearBtn => {
+              clearBtn.addEventListener("click", function () {
+                const row = clearBtn.closest(".slot-row");
+                if (row && confirm("Remove this extra day/session from public registration? Existing history is kept, but the slot will be inactive after Save Show.")) {
+                  hideAndClearRow(row);
+                  updateButton();
+                }
+              });
             });
             updateButton();
           })();
@@ -495,6 +548,8 @@
   </section>
   
 
+  {% set restricted_voting_enabled = ((s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') == 'participant_restricted') %}
+  {% if restricted_voting_enabled %}
   <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
       <div>
