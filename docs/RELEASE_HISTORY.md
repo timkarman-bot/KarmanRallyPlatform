@@ -57,3 +57,13 @@ Date: 2026-06-09
 
 ### Purpose
 Reduce import setup errors by giving clubs and show organizers a ready-to-use spreadsheet format.
+
+
+## 0.9.2-beta v5 — Import Page Cleanup
+
+Date: 2026-06-09
+
+### Changed
+- Kept the green downloadable template/mapping section.
+- Removed redundant blue CSV instruction block from the import page.
+- Simplified import setup so users rely on the system-generated templates.

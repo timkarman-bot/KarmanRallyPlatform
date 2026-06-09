@@ -49,29 +49,6 @@
       </div>
     </div>
   </div>
-
-  <section class="rounded-3xl border border-blue-100 bg-blue-50 p-6">
-    <h2 class="text-xl font-semibold text-slate-900">CSV Setup Instructions</h2>
-    <p class="mt-2 text-sm text-blue-950">The import is strict enough to protect the data, but flexible enough to accept common spreadsheet headers. Use the preferred headers when possible. Extra custom columns are allowed and ignored for now, so outside spreadsheets do not need to be stripped down.</p>
-    <div class="mt-4 grid gap-4 md:grid-cols-2">
-      <div class="rounded-2xl bg-white border border-blue-100 p-4">
-        <div class="font-semibold">Judging Classes CSV</div>
-        <div class="mt-2 text-xs text-slate-500">Preferred header row:</div>
-        <pre class="mt-2 overflow-x-auto rounded-xl bg-slate-900 text-white p-3 text-xs">class_code,class_name,description,year_min,year_max,make_contains,model_contains,keyword_contains,award_places,sort_order,is_active</pre>
-        <div class="mt-3 text-xs text-slate-600">Accepted aliases include: code, class, class name, judging class, min year, max year, make, model, keyword, awards, places, active.</div>
-      </div>
-      <div class="rounded-2xl bg-white border border-blue-100 p-4">
-        <div class="font-semibold">Accepted Registrations CSV</div>
-        <div class="mt-2 text-xs text-slate-500">Preferred header row:</div>
-        <pre class="mt-2 overflow-x-auto rounded-xl bg-slate-900 text-white p-3 text-xs">car_number,owner_name,phone,email,year,make,model,class_code,class_name,payment_status,waiver_received,custom_1,custom_2</pre>
-        <div class="mt-3 text-xs text-slate-600">Accepted aliases include: name, full name, owner, mobile, cell, email address, vehicle year, vehicle make, vehicle model, car #, entry number, class, division, judging class.</div>
-      </div>
-    </div>
-    <div class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-      <strong>Important:</strong> Registration imports will create missing judging classes when a row includes <code>class_code</code>, <code>class_name</code>, <code>class</code>, <code>division</code>, or <code>judging_class</code> that does not already exist for this show.
-    </div>
-  </section>
-
   <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <h2 class="text-xl font-semibold">Import Judging Classes</h2>
     <p class="mt-1 text-sm text-slate-600">Use this first when you have a class list. Existing classes with the same class code or class name are updated.</p>
