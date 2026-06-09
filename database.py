@@ -499,6 +499,17 @@ def init_db() -> None:
     ]:
         cur.execute(sql)
 
+    # Paper ballot completion support. Safe for existing Railway databases.
+    for sql in [
+        "ALTER TABLE paper_ballots ADD COLUMN voter_id INTEGER",
+        "ALTER TABLE paper_ballots ADD COLUMN participant_show_car_id INTEGER",
+        "ALTER TABLE paper_ballots ADD COLUMN participant_car_number INTEGER",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
 
     cur.execute(
         """
@@ -3175,6 +3186,74 @@ def get_or_create_participant_voter(show_id: int, show_car_id: int) -> sqlite3.R
         conn.close()
 
 
+
+def get_or_create_participant_voter_by_car_number(show_id: int, car_number: int) -> sqlite3.Row:
+    """Return the participant voter tied to a registered car number."""
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT id FROM show_cars
+        WHERE show_id = ? AND car_number = ?
+          AND COALESCE(is_placeholder, 0) = 0
+          AND COALESCE(registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
+        LIMIT 1
+        """,
+        (int(show_id), int(car_number)),
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f"Car #{car_number} is not an active registered participant for this show.")
+    return get_or_create_participant_voter(int(show_id), int(row["id"]))
+
+
+def paper_ballot_status_for_participant(show_id: int, voter_id: int) -> Dict[str, Any]:
+    """Return completed/missing paper-ballot categories for a voter.
+
+    A category is one class placement, such as class 7 first place.
+    Existing QR votes, prior paper votes, and judge/participant restricted votes all count as completed
+    when they use the same category key. Prior votes win; paper completion fills only missing categories.
+    """
+    classes = list_judging_classes(int(show_id), active_only=True)
+    keys: list[dict[str, Any]] = []
+    for c in classes:
+        for placement in (1, 2, 3):
+            keys.append({
+                "class_id": int(c["id"]),
+                "class_name": c["class_name"],
+                "class_code": c["class_code"] if "class_code" in c.keys() else "",
+                "placement": placement,
+                "category_key": _paper_vote_category(c, placement),
+            })
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT rv.category_key, rv.selected_show_car_id, sc.car_number, sc.year, sc.make, sc.model
+        FROM restricted_votes rv
+        JOIN show_cars sc ON sc.id = rv.selected_show_car_id
+        WHERE rv.show_id = ? AND rv.voter_id = ?
+        """,
+        (int(show_id), int(voter_id)),
+    ).fetchall()
+    conn.close()
+    completed_map = {r["category_key"]: dict(r) for r in rows}
+    completed = []
+    missing = []
+    for item in keys:
+        if item["category_key"] in completed_map:
+            row = completed_map[item["category_key"]]
+            completed.append({**item, "car_number": row.get("car_number"), "vehicle": f"{row.get('year') or ''} {row.get('make') or ''} {row.get('model') or ''}".strip()})
+        else:
+            missing.append(item)
+    return {
+        "completed": completed,
+        "missing": missing,
+        "completed_count": len(completed),
+        "missing_count": len(missing),
+        "total_count": len(keys),
+        "is_complete": bool(keys) and not missing,
+    }
+
+
 def create_judge_voter(show_id: int, display_name: str = "Judge", email: str = "", phone: str = "") -> sqlite3.Row:
     conn = _conn()
     cur = conn.cursor()
@@ -3692,6 +3771,7 @@ def create_paper_ballot_with_votes(
     source: str = "manual",
     entered_by: str = "",
     notes: str = "",
+    participant_car_number: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Create one paper ballot and count its 1st/2nd/3rd choices.
 
@@ -3710,6 +3790,16 @@ def create_paper_ballot_with_votes(
 
     classes = {int(c["id"]): c for c in list_judging_classes(int(show_id), active_only=True)}
     cleaned: Dict[int, Dict[int, int]] = {}
+    voter = None
+    participant_show_car_id = None
+    completed_categories: set[str] = set()
+    skipped: List[str] = []
+
+    if participant_car_number is not None:
+        voter = get_or_create_participant_voter_by_car_number(int(show_id), int(participant_car_number))
+        participant_show_car_id = int(voter["show_car_id"]) if voter["show_car_id"] else None
+        status = paper_ballot_status_for_participant(int(show_id), int(voter["id"]))
+        completed_categories = {item["category_key"] for item in status.get("completed", [])}
 
     for class_id, places in (selections or {}).items():
         try:
@@ -3734,6 +3824,10 @@ def create_paper_ballot_with_votes(
                 errors.append(f"{classes[class_id]['class_name']}: car #{car_number} was entered more than once on the same ballot.")
                 continue
             seen_numbers.add(car_number)
+            category_key = _paper_vote_category(classes[class_id], placement)
+            if category_key in completed_categories:
+                skipped.append(f"{classes[class_id]['class_name']} {placement}: prior QR/electronic vote already exists; paper entry ignored.")
+                continue
             car = _find_show_car_for_class(conn, int(show_id), class_id, car_number)
             if not car:
                 errors.append(f"{classes[class_id]['class_name']} {placement}: car #{car_number} is not registered in this class.")
@@ -3753,6 +3847,8 @@ def create_paper_ballot_with_votes(
 
     if not accepted:
         conn.close()
+        if skipped:
+            return {"ok": True, "ballot_id": None, "ballot_token": "", "accepted_count": 0, "skipped": skipped, "errors": []}
         return {"ok": False, "errors": ["No valid votes were entered."], "accepted_count": 0}
 
     token = secrets.token_urlsafe(12)
@@ -3760,10 +3856,10 @@ def create_paper_ballot_with_votes(
         cur.execute("BEGIN IMMEDIATE")
         cur.execute(
             """
-            INSERT INTO paper_ballots (show_id, ballot_token, ballot_label, source, entered_by, status, notes)
-            VALUES (?, ?, ?, ?, ?, 'accepted', ?)
+            INSERT INTO paper_ballots (show_id, ballot_token, ballot_label, source, entered_by, status, notes, voter_id, participant_show_car_id, participant_car_number)
+            VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?)
             """,
-            (int(show_id), token, ballot_label or None, source or "manual", entered_by or None, notes or None),
+            (int(show_id), token, ballot_label or None, source or "manual", entered_by or None, notes or None, int(voter["id"]) if voter else None, participant_show_car_id, int(participant_car_number) if participant_car_number is not None else None),
         )
         ballot_id = int(cur.lastrowid)
 
@@ -3787,9 +3883,19 @@ def create_paper_ballot_with_votes(
                 """,
                 (int(show_id), int(item["show_car_id"]), category, synthetic_session_id),
             )
+            if voter:
+                cur.execute(
+                    """
+                    INSERT INTO restricted_votes
+                        (show_id, voter_id, category_key, judging_class_id, selected_show_car_id, vote_weight, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 1, datetime('now'))
+                    ON CONFLICT(show_id, voter_id, category_key) DO NOTHING
+                    """,
+                    (int(show_id), int(voter["id"]), category, int(item["class_id"]), int(item["show_car_id"])),
+                )
 
         conn.commit()
-        return {"ok": True, "ballot_id": ballot_id, "ballot_token": token, "accepted_count": len(accepted), "errors": []}
+        return {"ok": True, "ballot_id": ballot_id, "ballot_token": token, "accepted_count": len(accepted), "skipped": skipped, "errors": []}
     except Exception as exc:
         conn.rollback()
         return {"ok": False, "errors": [str(exc)], "accepted_count": 0}
@@ -3803,6 +3909,7 @@ def list_recent_paper_ballots(show_id: int, limit: int = 25) -> List[sqlite3.Row
         return conn.execute(
             """
             SELECT pb.*,
+                   pb.participant_car_number,
                    COUNT(pbv.id) AS vote_lines
             FROM paper_ballots pb
             LEFT JOIN paper_ballot_votes pbv ON pbv.paper_ballot_id = pb.id
@@ -3820,9 +3927,9 @@ def list_recent_paper_ballots(show_id: int, limit: int = 25) -> List[sqlite3.Row
 def build_paper_ballot_csv_template(show_id: int) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ballot_label", "class_code", "class_name", "first_car_number", "second_car_number", "third_car_number"])
+    writer.writerow(["participant_car_number", "ballot_label", "class_code", "class_name", "first_car_number", "second_car_number", "third_car_number"])
     for c in list_paper_ballot_classes(int(show_id)):
-        writer.writerow(["", c["class_code"] or "", c["class_name"] or "", "", "", ""])
+        writer.writerow(["", "", c["class_code"] or "", c["class_name"] or "", "", "", ""])
     return output.getvalue()
 
 
@@ -3836,11 +3943,18 @@ def import_paper_ballot_csv(show_id: int, csv_text: str, *, entered_by: str = ""
     by_name = {str(c["class_name"] or "").strip().lower(): c for c in classes if str(c["class_name"] or "").strip()}
 
     grouped: Dict[str, Dict[int, Dict[int, int]]] = {}
+    group_participants: Dict[str, Optional[int]] = {}
     errors: List[str] = []
 
     for idx, row in enumerate(reader, start=2):
         row = {str(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
-        label = row.get("ballot_label") or row.get("ballot") or f"import-row-{idx}"
+        participant_raw = row.get("participant_car_number") or row.get("voter_car_number") or ""
+        label_base = row.get("ballot_label") or row.get("ballot") or f"import-row-{idx}"
+        label = f"{participant_raw}:{label_base}" if participant_raw else label_base
+        if participant_raw and participant_raw.isdigit():
+            group_participants[label] = int(participant_raw)
+        else:
+            group_participants.setdefault(label, None)
         class_key = (row.get("class_code") or "").strip().lower()
         class_name = (row.get("class_name") or row.get("class") or "").strip().lower()
         class_row = by_code.get(class_key) if class_key else None
@@ -3868,6 +3982,7 @@ def import_paper_ballot_csv(show_id: int, csv_text: str, *, entered_by: str = ""
             ballot_label=label,
             source="csv_import",
             entered_by=entered_by,
+            participant_car_number=group_participants.get(label),
         )
         if not result.get("ok"):
             errors.extend([f"{label}: {e}" for e in result.get("errors", [])])

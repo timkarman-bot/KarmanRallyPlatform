@@ -128,6 +128,8 @@ from database import (
     list_recent_paper_ballots,
     build_paper_ballot_csv_template,
     import_paper_ballot_csv,
+    get_or_create_participant_voter_by_car_number,
+    paper_ballot_status_for_participant,
     find_matching_judging_class,
     ensure_placeholder_cards_up_to_max,
     import_judging_classes_for_show,
@@ -3191,13 +3193,22 @@ def admin_debug_registration_slots():
 @app.get("/admin/paper-ballots")
 @require_admin
 def admin_paper_ballots():
-    show_id = request.args.get("show_id", "").strip()
-    show = get_show_by_id(int(show_id)) if show_id.isdigit() else _admin_current_show()
+    show = _admin_current_show()
     if not show:
-        return "No accessible show.", 403
+        return redirect(url_for("admin_shows"))
     _require_show_access(int(show["id"]))
     classes = list_paper_ballot_classes(int(show["id"]))
     recent_ballots = list_recent_paper_ballots(int(show["id"]))
+    participant_status = None
+    car_number_raw = request.args.get("car_number", "").strip()
+    if car_number_raw:
+        try:
+            voter = get_or_create_participant_voter_by_car_number(int(show["id"]), int(car_number_raw))
+            participant_status = paper_ballot_status_for_participant(int(show["id"]), int(voter["id"]))
+            participant_status["car_number"] = int(car_number_raw)
+            participant_status["voter"] = voter
+        except Exception as exc:
+            participant_status = {"error": str(exc), "car_number": car_number_raw}
     return render_template(
         "admin_paper_ballot_entry.html",
         show=show,
@@ -3205,26 +3216,28 @@ def admin_paper_ballots():
         recent_ballots=recent_ballots,
         result=None,
         errors=[],
+        participant_status=participant_status,
     )
 
 
 @app.post("/admin/paper-ballots")
 @require_admin
 def admin_paper_ballots_submit():
-    show_id = int(request.form.get("show_id", "0") or 0)
-    show = get_show_by_id(show_id)
-    if not show:
-        abort(404)
+    show_id = int(request.form.get("show_id", "0") or "0")
+    if not show_id:
+        abort(400, "Missing show.")
     _require_show_access(show_id)
+    show = get_show_by_id(show_id)
     classes = list_paper_ballot_classes(show_id)
-    selections: Dict[int, Dict[int, int]] = {}
+    selections = {}
     for c in classes:
         class_id = int(c["id"])
-        selections[class_id] = {}
-        for placement, field in [(1, "first"), (2, "second"), (3, "third")]:
-            raw = request.form.get(f"class_{class_id}_{field}", "").strip()
-            if raw:
-                selections[class_id][placement] = raw
+        selections[class_id] = {
+            1: request.form.get(f"class_{class_id}_first", "").strip(),
+            2: request.form.get(f"class_{class_id}_second", "").strip(),
+            3: request.form.get(f"class_{class_id}_third", "").strip(),
+        }
+    participant_car_number = request.form.get("participant_car_number", "").strip()
     result = create_paper_ballot_with_votes(
         show_id,
         selections,
@@ -3232,25 +3245,36 @@ def admin_paper_ballots_submit():
         source="manual",
         entered_by=_current_admin_label(),
         notes=request.form.get("notes", "").strip(),
+        participant_car_number=int(participant_car_number) if participant_car_number.isdigit() else None,
     )
+    errors = result.get("errors", []) if not result.get("ok") else []
     recent_ballots = list_recent_paper_ballots(show_id)
+    participant_status = None
+    if participant_car_number.isdigit():
+        try:
+            voter = get_or_create_participant_voter_by_car_number(show_id, int(participant_car_number))
+            participant_status = paper_ballot_status_for_participant(show_id, int(voter["id"]))
+            participant_status["car_number"] = int(participant_car_number)
+            participant_status["voter"] = voter
+        except Exception as exc:
+            participant_status = {"error": str(exc), "car_number": participant_car_number}
     return render_template(
         "admin_paper_ballot_entry.html",
         show=show,
         classes=classes,
         recent_ballots=recent_ballots,
         result=result if result.get("ok") else None,
-        errors=result.get("errors", []),
+        errors=errors,
+        participant_status=participant_status,
     )
 
 
 @app.get("/admin/paper-ballots/print")
 @require_admin
 def admin_paper_ballots_print():
-    show_id = request.args.get("show_id", "").strip()
-    show = get_show_by_id(int(show_id)) if show_id.isdigit() else _admin_current_show()
+    show = _admin_current_show()
     if not show:
-        return "No accessible show.", 403
+        return redirect(url_for("admin_shows"))
     _require_show_access(int(show["id"]))
     classes = list_paper_ballot_classes(int(show["id"]))
     return render_template("paper_ballot_print.html", show=show, classes=classes, hide_nav=True)
@@ -3259,10 +3283,9 @@ def admin_paper_ballots_print():
 @app.get("/admin/paper-ballots/template.csv")
 @require_admin
 def admin_paper_ballots_template_csv():
-    show_id = request.args.get("show_id", "").strip()
-    show = get_show_by_id(int(show_id)) if show_id.isdigit() else _admin_current_show()
+    show = _admin_current_show()
     if not show:
-        return "No accessible show.", 403
+        return redirect(url_for("admin_shows"))
     _require_show_access(int(show["id"]))
     csv_text = build_paper_ballot_csv_template(int(show["id"]))
     return send_file(
@@ -3276,10 +3299,9 @@ def admin_paper_ballots_template_csv():
 @app.get("/admin/paper-ballots/import")
 @require_admin
 def admin_paper_ballots_import_page():
-    show_id = request.args.get("show_id", "").strip()
-    show = get_show_by_id(int(show_id)) if show_id.isdigit() else _admin_current_show()
+    show = _admin_current_show()
     if not show:
-        return "No accessible show.", 403
+        return redirect(url_for("admin_shows"))
     _require_show_access(int(show["id"]))
     return render_template("admin_paper_ballot_import.html", show=show, result=None, errors=[])
 
