@@ -115,7 +115,12 @@
                   {% endif %}
                 </div>
               </td>
-              <td class="py-3"><button class="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50" type="button" onclick="printSingle('{{ c['id'] }}')">Print</button></td>
+              <td class="py-3">
+  <div class="flex flex-wrap gap-2">
+    <button class="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50" type="button" onclick="printSingle('{{ c['id'] }}')">Print</button>
+    <a class="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50" href="{{ url_for('admin_registration_edit', show_car_id=c['id']) }}">Edit</a>
+  </div>
+</td>
               <td class="py-3"><a class="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50" href="{{ url_for('placeholder_claim_page', show_slug=show['slug'], car_token=c['car_token']) }}">Owner claim / registration</a></td>
               <td class="py-3">
                 <div class="flex items-center gap-2 flex-wrap">

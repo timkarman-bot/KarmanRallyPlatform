@@ -1925,6 +1925,7 @@ def search_show_cars_admin(show_id: int, query: str) -> List[sqlite3.Row]:
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
+        LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
     """
 
     if not q:
@@ -1996,6 +1997,8 @@ def get_show_car_admin_by_id(show_id: int, show_car_id: int) -> Optional[sqlite3
             p.email AS owner_email,
             p.opt_in_future,
             p.sponsor_opt_in,
+            jc.class_name AS judging_class_name,
+            jc.class_code AS judging_class_code,
             slot.slot_label,
             slot.slot_date,
             slot.cars_arrive_time AS slot_cars_arrive_time,
@@ -2016,12 +2019,13 @@ def get_show_car_admin_by_id(show_id: int, show_car_id: int) -> Optional[sqlite3
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
         LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
-    """,
+        WHERE sc.show_id = ? AND sc.id = ?
+        LIMIT 1
+        """,
         (int(show_id), int(show_car_id)),
     ).fetchone()
     conn.close()
     return row
-
 
 def update_show_car_admin_registration(
     *,
