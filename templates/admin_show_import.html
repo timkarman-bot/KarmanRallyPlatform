@@ -1,3 +1,37 @@
+
+  <section class="rounded-3xl border border-emerald-200 bg-emerald-50 p-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div>
+        <div class="text-xs font-semibold tracking-wide text-emerald-700">IMPORT TEMPLATES</div>
+        <h2 class="mt-1 text-xl font-semibold text-slate-900">Download spreadsheet templates</h2>
+        <p class="mt-2 text-sm text-emerald-900">
+          Use these templates when a club, school, business, or show organizer sends judging classes or accepted registrations.
+          Extra custom columns are allowed, but the preferred fields below make import matching reliable.
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a class="btn btn-outline" href="{{ url_for('admin_download_judging_classes_template', show_id=show_detail['id']) }}">Classes CSV</a>
+        <a class="btn btn-outline" href="{{ url_for('admin_download_registration_template', show_id=show_detail['id']) }}">Registrations CSV</a>
+        <a class="btn btn-primary" href="{{ url_for('admin_download_combined_import_template', show_id=show_detail['id']) }}">Combined CSV</a>
+      </div>
+    </div>
+
+    <div class="mt-5 grid gap-4 md:grid-cols-2">
+      <div class="rounded-2xl border border-emerald-200 bg-white p-4">
+        <div class="font-semibold">Judging Classes preferred fields</div>
+        <div class="mt-2 text-xs text-slate-700 font-mono break-words">
+          class_code, class_name, description, sort_order, award_places, is_active
+        </div>
+      </div>
+      <div class="rounded-2xl border border-emerald-200 bg-white p-4">
+        <div class="font-semibold">Accepted Registrations preferred fields</div>
+        <div class="mt-2 text-xs text-slate-700 font-mono break-words">
+          car_number, owner_name, owner_email, owner_phone, year, make, model, class_code, class_name, registration_status, custom_1, custom_2
+        </div>
+      </div>
+    </div>
+  </section>
+
 {% extends "base.html" %}
 {% set title = "Import Data • " ~ show_detail['title'] %}
 {% block content %}

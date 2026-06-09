@@ -43,3 +43,17 @@ Added show ownership and role-based administration foundation.
 Date: 2026-06-09
 
 Added public registration show picker, registration full/closed states, and capacity reopening after cancellation.
+
+
+## 0.9.2-beta v4 — Downloadable Import Templates
+
+Date: 2026-06-09
+
+### Added
+- Downloadable Judging Classes CSV template.
+- Downloadable Accepted Registrations CSV template.
+- Downloadable Combined Show Import CSV template.
+- Import-page instructions for preferred fields and custom columns.
+
+### Purpose
+Reduce import setup errors by giving clubs and show organizers a ready-to-use spreadsheet format.

@@ -273,7 +273,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 
 APP_VERSION = "0.9.2-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Paper Ballot Entry / Class-Based Voting Beta"
+APP_RELEASE_NAME = "Paper Ballot and Import Workflow Beta"
 
 
 def prereg_allowed(show) -> bool:
@@ -4643,6 +4643,124 @@ def admin_users():
         users=users,
         shows=shows,
         roles=roles,
+    )
+
+
+# ==========================================================
+# Import Template Downloads - 0.9.2-beta v4
+# ==========================================================
+
+@app.get("/admin/shows/<int:show_id>/import/template/classes.csv")
+@require_admin
+def admin_download_judging_classes_template(show_id: int):
+    _require_show_access(show_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["class_code", "class_name", "description", "sort_order", "award_places", "is_active"])
+    writer.writerow(["PC", "People's Choice", "Overall favorite", "10", "3", "1"])
+    writer.writerow(["BP", "Best Paint", "Best paint / finish", "20", "3", "1"])
+    writer.writerow(["BI", "Best Interior", "Best interior", "30", "3", "1"])
+    data = output.getvalue().encode("utf-8-sig")
+    return send_file(
+        io.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="judging_classes_template.csv",
+    )
+
+
+@app.get("/admin/shows/<int:show_id>/import/template/registrations.csv")
+@require_admin
+def admin_download_registration_template(show_id: int):
+    _require_show_access(show_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "car_number",
+        "owner_name",
+        "owner_email",
+        "owner_phone",
+        "year",
+        "make",
+        "model",
+        "class_code",
+        "class_name",
+        "registration_status",
+        "custom_1",
+        "custom_2",
+    ])
+    writer.writerow([
+        "101",
+        "Sample Owner",
+        "owner@example.com",
+        "555-555-5555",
+        "1967",
+        "Ford",
+        "Mustang",
+        "PC",
+        "People's Choice",
+        "paid",
+        "",
+        "",
+    ])
+    writer.writerow([
+        "102",
+        "Another Owner",
+        "another@example.com",
+        "555-555-1212",
+        "1977",
+        "MG",
+        "MGB",
+        "BP",
+        "Best Paint",
+        "paid",
+        "",
+        "",
+    ])
+    data = output.getvalue().encode("utf-8-sig")
+    return send_file(
+        io.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="accepted_registrations_template.csv",
+    )
+
+
+@app.get("/admin/shows/<int:show_id>/import/template/combined.csv")
+@require_admin
+def admin_download_combined_import_template(show_id: int):
+    _require_show_access(show_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "record_type",
+        "car_number",
+        "owner_name",
+        "owner_email",
+        "owner_phone",
+        "year",
+        "make",
+        "model",
+        "class_code",
+        "class_name",
+        "description",
+        "sort_order",
+        "award_places",
+        "is_active",
+        "registration_status",
+        "custom_1",
+        "custom_2",
+    ])
+    writer.writerow(["class", "", "", "", "", "", "", "", "PC", "People's Choice", "Overall favorite", "10", "3", "1", "", "", ""])
+    writer.writerow(["class", "", "", "", "", "", "", "", "BP", "Best Paint", "Best paint / finish", "20", "3", "1", "", "", ""])
+    writer.writerow(["registration", "101", "Sample Owner", "owner@example.com", "555-555-5555", "1967", "Ford", "Mustang", "PC", "People's Choice", "", "", "", "", "paid", "", ""])
+    writer.writerow(["registration", "102", "Another Owner", "another@example.com", "555-555-1212", "1977", "MG", "MGB", "BP", "Best Paint", "", "", "", "", "paid", "", ""])
+    data = output.getvalue().encode("utf-8-sig")
+    return send_file(
+        io.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="combined_show_import_template.csv",
     )
 
 if __name__ == "__main__":

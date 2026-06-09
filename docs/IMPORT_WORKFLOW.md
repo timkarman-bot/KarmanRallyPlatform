@@ -79,3 +79,42 @@ The importer allows extra custom columns such as custom_1 and custom_2. They are
 - Placeholder car numbers can be claimed by imported registrations.
 - Blank car numbers use the next placeholder or next available number.
 - Imports are accepted registrations and do not trigger online checkout.
+
+
+## 0.9.2-beta v4 — Downloadable Import Templates
+
+The show import page now provides three downloadable CSV templates:
+
+1. Judging Classes CSV
+2. Accepted Registrations CSV
+3. Combined Show Import CSV
+
+### Judging Classes Template
+
+Preferred columns:
+
+```csv
+class_code,class_name,description,sort_order,award_places,is_active
+```
+
+### Accepted Registrations Template
+
+Preferred columns:
+
+```csv
+car_number,owner_name,owner_email,owner_phone,year,make,model,class_code,class_name,registration_status,custom_1,custom_2
+```
+
+### Combined Import Template
+
+Preferred columns:
+
+```csv
+record_type,car_number,owner_name,owner_email,owner_phone,year,make,model,class_code,class_name,description,sort_order,award_places,is_active,registration_status,custom_1,custom_2
+```
+
+Use `record_type=class` for judging class rows and `record_type=registration` for accepted registration rows.
+
+### Rule
+
+Registrations that reference a missing class should create that class for the show when `class_code` or `class_name` is provided.
