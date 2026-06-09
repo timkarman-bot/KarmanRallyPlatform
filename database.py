@@ -154,6 +154,9 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN max_votes_per_checkout INTEGER NOT NULL DEFAULT 50",
         "ALTER TABLE shows ADD COLUMN allow_sponsorships INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE shows ADD COLUMN registration_slot_selection_mode TEXT NOT NULL DEFAULT 'single'",
+        "ALTER TABLE shows ADD COLUMN card_headline TEXT",
+        "ALTER TABLE shows ADD COLUMN card_subheadline TEXT",
+        "ALTER TABLE shows ADD COLUMN card_layout_mode TEXT NOT NULL DEFAULT 'auto'",
     ]:
         try:
             cur.execute(sql)
@@ -843,6 +846,9 @@ def create_show_admin(
     max_votes_per_checkout: int = 50,
     allow_sponsorships: int = 1,
     registration_slot_selection_mode: str = "single",
+    card_headline: str = "",
+    card_subheadline: str = "",
+    card_layout_mode: str = "auto",
 ) -> int:
     conn = _conn()
     cur = conn.cursor()
@@ -860,6 +866,10 @@ def create_show_admin(
     if payment_mode_clean not in {"stripe", "external", "none"}:
         payment_mode_clean = "stripe"
 
+    card_layout_mode_clean = (card_layout_mode or "auto").strip().lower()
+    if card_layout_mode_clean not in {"auto", "voting", "information", "sponsor"}:
+        card_layout_mode_clean = "auto"
+
     cur.execute(
         """
         INSERT INTO shows (
@@ -869,9 +879,10 @@ def create_show_admin(
             cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
             waiver_template_id, organizer_name, venue_name, venue_address_line1, venue_address_line2,
             venue_city, venue_state, venue_zip, charity_name, charity_description,
-            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships, registration_slot_selection_mode
+            voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships, registration_slot_selection_mode,
+            card_headline, card_subheadline, card_layout_mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slug.strip(),
@@ -919,6 +930,9 @@ def create_show_admin(
             int(max_votes_per_checkout or 50),
             1 if int(allow_sponsorships or 0) == 1 else 0,
             normalize_registration_slot_selection_mode(registration_slot_selection_mode),
+            (card_headline or "").strip(),
+            (card_subheadline or "").strip(),
+            card_layout_mode_clean,
         ),
     )
     conn.commit()
@@ -973,7 +987,14 @@ def update_show_admin_record(
     max_votes_per_checkout: int = 50,
     allow_sponsorships: int = 1,
     registration_slot_selection_mode: str = "single",
+    card_headline: str = "",
+    card_subheadline: str = "",
+    card_layout_mode: str = "auto",
 ) -> None:
+    card_layout_mode_clean = (card_layout_mode or "auto").strip().lower()
+    if card_layout_mode_clean not in {"auto", "voting", "information", "sponsor"}:
+        card_layout_mode_clean = "auto"
+
     conn = _conn()
     conn.execute(
         """
@@ -986,7 +1007,8 @@ def update_show_admin_record(
             organizer_name = ?, venue_name = ?, venue_address_line1 = ?, venue_address_line2 = ?,
             venue_city = ?, venue_state = ?, venue_zip = ?, charity_name = ?, charity_description = ?,
             voting_mode = ?, payment_mode = ?, charity_processor_label = ?, external_payment_url = ?, allow_custom_votes = ?,
-            preset_vote_options = ?, max_votes_per_checkout = ?, allow_sponsorships = ?, registration_slot_selection_mode = ?
+            preset_vote_options = ?, max_votes_per_checkout = ?, allow_sponsorships = ?, registration_slot_selection_mode = ?,
+            card_headline = ?, card_subheadline = ?, card_layout_mode = ?
         WHERE id = ?
         """,
         (
@@ -1033,6 +1055,9 @@ def update_show_admin_record(
             int(max_votes_per_checkout or 50),
             1 if int(allow_sponsorships or 0) == 1 else 0,
             normalize_registration_slot_selection_mode(registration_slot_selection_mode),
+            (card_headline or "").strip(),
+            (card_subheadline or "").strip(),
+            card_layout_mode_clean,
             int(show_id),
         ),
     )

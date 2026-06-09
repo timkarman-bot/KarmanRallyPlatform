@@ -3022,6 +3022,9 @@ def admin_shows_create():
         max_votes_per_checkout=max_votes_per_checkout,
         allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
         registration_slot_selection_mode=request.form.get("registration_slot_selection_mode", "single").strip(),
+        card_headline=request.form.get("card_headline", "").strip(),
+        card_subheadline=request.form.get("card_subheadline", "").strip(),
+        card_layout_mode=request.form.get("card_layout_mode", "auto").strip(),
     )
     save_registration_slots_for_show(new_show_id, _slot_payloads_from_request())
 
@@ -3114,6 +3117,9 @@ def admin_shows_update(show_id: int):
         max_votes_per_checkout=max_votes_per_checkout,
         allow_sponsorships=1 if request.form.get("allow_sponsorships") == "on" else 0,
         registration_slot_selection_mode=request.form.get("registration_slot_selection_mode", "single").strip(),
+        card_headline=request.form.get("card_headline", "").strip(),
+        card_subheadline=request.form.get("card_subheadline", "").strip(),
+        card_layout_mode=request.form.get("card_layout_mode", "auto").strip(),
     )
     save_registration_slots_for_show(show_id, _slot_payloads_from_request())
 

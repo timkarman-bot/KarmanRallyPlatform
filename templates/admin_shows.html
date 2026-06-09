@@ -283,6 +283,30 @@
         <input name="cta_url" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
       </div>
 
+      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+        <div class="text-xs font-semibold tracking-wide text-blue-700">WINDSHIELD CARD SETTINGS</div>
+        <p class="mt-1 text-sm text-blue-900">Customize the printed windscreen cards for this show. Auto uses voting cards for voting shows and information cards for cruise-ins or events with voting disabled.</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Layout Mode</label>
+            <select name="card_layout_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white">
+              <option value="auto" selected>Auto — use show settings</option>
+              <option value="voting">Voting card</option>
+              <option value="information">Information card</option>
+              <option value="sponsor">Sponsor / thank-you card</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Headline</label>
+            <input name="card_headline" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: WELCOME or SCAN TO VOTE">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Subheadline</label>
+            <input name="card_subheadline" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: Journey Church Cruise-In">
+          </div>
+        </div>
+      </div>
+
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Organizer Name</label>
         <input name="organizer_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
@@ -595,6 +619,31 @@
       <div class="md:col-span-2">
         <label class="block text-sm font-medium text-slate-700 mb-1">CTA URL</label>
         <input name="cta_url" value="{{ s['cta_url'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
+      </div>
+
+      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+        <div class="text-xs font-semibold tracking-wide text-blue-700">WINDSHIELD CARD SETTINGS</div>
+        <p class="mt-1 text-sm text-blue-900">Customize the printed windscreen cards for this show. Auto uses voting cards for voting shows and information cards for cruise-ins or events with voting disabled.</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Layout Mode</label>
+            {% set card_mode = s['card_layout_mode'] or 'auto' %}
+            <select name="card_layout_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white">
+              <option value="auto" {% if card_mode == 'auto' %}selected{% endif %}>Auto — use show settings</option>
+              <option value="voting" {% if card_mode == 'voting' %}selected{% endif %}>Voting card</option>
+              <option value="information" {% if card_mode == 'information' %}selected{% endif %}>Information card</option>
+              <option value="sponsor" {% if card_mode == 'sponsor' %}selected{% endif %}>Sponsor / thank-you card</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Headline</label>
+            <input name="card_headline" value="{{ s['card_headline'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: WELCOME or SCAN TO VOTE">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Card Subheadline</label>
+            <input name="card_subheadline" value="{{ s['card_subheadline'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: Journey Church Cruise-In">
+          </div>
+        </div>
       </div>
 
       <div>

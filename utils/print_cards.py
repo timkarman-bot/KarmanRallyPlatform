@@ -159,6 +159,65 @@ def build_landscape_cards_pdf(
         for i, img in enumerate(items):
             draw_image_contain(c, img, x + i * (cell_w + gap), y, cell_w, h)
 
+    def show_text(key: str, default: str = "") -> str:
+        try:
+            value = show.get(key, default)
+        except Exception:
+            value = default
+        return str(value or default or "").strip()
+
+    def show_int(key: str, default: int = 0) -> int:
+        try:
+            return int(show.get(key, default) or default)
+        except Exception:
+            return default
+
+    def card_layout_mode() -> str:
+        mode = show_text("card_layout_mode", "auto").lower()
+        return mode if mode in {"auto", "voting", "information", "sponsor"} else "auto"
+
+    def voting_enabled_by_show() -> bool:
+        if show_int("voting_open", 0) != 1:
+            return False
+        if show_text("voting_mode", "fundraiser_unlimited").lower() == "none":
+            return False
+        if show_text("payment_mode", "stripe").lower() == "none":
+            return False
+        if show_text("show_type", "full").lower() == "cruise_in":
+            return False
+        return True
+
+    def card_is_voting() -> bool:
+        mode = card_layout_mode()
+        if mode == "voting":
+            return True
+        if mode in {"information", "sponsor"}:
+            return False
+        return voting_enabled_by_show()
+
+    def info_url() -> str:
+        return (
+            show_text("cta_url")
+            or show_text("external_payment_url")
+            or f"{base_url.rstrip('/')}/show/{show_text('slug')}"
+        )
+
+    def wrap_text(text: str, max_chars: int) -> List[str]:
+        words = str(text or "").replace("\r", "").split()
+        lines: List[str] = []
+        current = ""
+        for word in words:
+            candidate = word if not current else current + " " + word
+            if len(candidate) <= max_chars:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines
+
     brand_logo = safe_open_rgba(static_fs("img/karmankarshows-logo.png"))
 
     sponsor_rows: List[dict] = []
@@ -214,6 +273,19 @@ def build_landscape_cards_pdf(
         vehicle_parts = [p for p in [year, make, model] if p and p.upper() != "TBD"]
         vehicle_text = " ".join(vehicle_parts) if vehicle_parts else "_________________________________________"
 
+        is_voting_card = card_is_voting()
+        mode = card_layout_mode()
+        default_headline = "SCAN TO VOTE" if is_voting_card else ("SPONSOR INFO" if mode == "sponsor" else "EVENT INFO")
+        card_headline = show_text("card_headline") or default_headline
+        card_subheadline = show_text("card_subheadline") or show_text("title")
+        card_message = show_text("qr_message") or (
+            "Scan the code for event details, schedule, location information, and updates."
+            if not is_voting_card
+            else "Scan a category code to vote for this vehicle. Votes are counted according to this show's voting rules."
+        )
+        info_qr_label = show_text("cta_label") or "More information"
+        info_qr_url = info_url()
+
         # FRONT
         c.setTitle(f"{show.get('title', 'Voting Cards')} - Car #{car_number}")
 
@@ -246,9 +318,9 @@ def build_landscape_cards_pdf(
         c.setFont("Helvetica-Bold", 24)
         c.drawRightString(page_w - margin - 10, header_y + 0.78 * inch, f"CAR #{car_number}")
         c.setFont("Helvetica-Bold", 12)
-        c.drawRightString(page_w - margin - 10, header_y + 0.53 * inch, "SCAN TO VOTE")
+        c.drawRightString(page_w - margin - 10, header_y + 0.53 * inch, card_headline[:34])
         c.setFont("Helvetica", 10)
-        c.drawRightString(page_w - margin - 10, header_y + 0.34 * inch, str(show.get("title") or ""))
+        c.drawRightString(page_w - margin - 10, header_y + 0.34 * inch, card_subheadline[:60])
 
         body_y = margin + 1.25 * inch
         body_h = 4.85 * inch
@@ -271,94 +343,154 @@ def build_landscape_cards_pdf(
         c.setFont("Helvetica", 11)
         c.drawString(margin + 10, body_y + body_h - 110, vehicle_text[:40])
 
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(margin + 10, body_y + body_h - 146, "How voting works")
-        c.setFont("Helvetica", 10)
-        info_lines = [
-            "1. Scan a code on the right.",
-            "2. Choose the number of votes.",
-            "3. Complete payment.",
-            "$1 per vote unless",
-            "changed by the event.",
-        ]
-        yy = body_y + body_h - 162
-        for line in info_lines:
-            c.drawString(margin + 12, yy, line)
-            yy -= 14
+        if is_voting_card:
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin + 10, body_y + body_h - 146, "How voting works")
+            c.setFont("Helvetica", 10)
+            info_lines = [
+                "1. Scan a code on the right.",
+                "2. Choose the number of votes.",
+                "3. Complete payment if required.",
+                "Votes are counted according",
+                "to this show's rules.",
+            ]
+            yy = body_y + body_h - 162
+            for line in info_lines:
+                c.drawString(margin + 12, yy, line)
+                yy -= 14
 
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(margin + 10, body_y + 92, "Branch awards")
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(margin + 10, body_y + 92, "Award notes")
 
-        c.setFont("Helvetica", 8.5)
-        branch_lines = [
-            "Army, Navy, Marines, and Air Force",
-            "awards are voted on by veterans.",
-            "People's Choice is open to everyone.",
-        ]
-        
-        yy = body_y + 76
-        for line in branch_lines:
-            c.drawString(margin + 12, yy, line)
-            yy -= 10
+            c.setFont("Helvetica", 8.5)
+            branch_lines = [
+                "Scan the category that matches",
+                "your vote. Event staff may",
+                "adjust categories per show.",
+            ]
+            yy = body_y + 76
+            for line in branch_lines:
+                c.drawString(margin + 12, yy, line)
+                yy -= 10
+        else:
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin + 10, body_y + body_h - 146, "Event information")
+            c.setFont("Helvetica", 9.5)
+            yy = body_y + body_h - 164
+            for line in wrap_text(card_message, 32)[:10]:
+                c.drawString(margin + 12, yy, line)
+                yy -= 13
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin + 10, body_y + 56, info_qr_label[:30])
+            c.setFont("Helvetica", 8.5)
+            c.drawString(margin + 12, body_y + 42, "Scan the large code for details.")
 
         qr_x = margin + left_w + gap
         qr_y = body_y
         qr_h = body_h
         draw_box(qr_x, qr_y, right_w, qr_h, lw=1.0)
 
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(qr_x + 10, qr_y + qr_h - 20, "Vote for this vehicle")
+        if is_voting_card:
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(qr_x + 10, qr_y + qr_h - 20, "Vote for this vehicle")
 
-        cols = 4
-        rows = 2
-        inner_pad_x = 10
-        inner_pad_y = 14
-        top_reserved = 24
+            cols = 4
+            rows = 2
+            inner_pad_x = 10
+            inner_pad_y = 14
+            top_reserved = 24
 
-        cell_w = (right_w - (inner_pad_x * 2)) / cols
-        cell_h = (qr_h - top_reserved - (inner_pad_y * 2)) / rows
+            cell_w = (right_w - (inner_pad_x * 2)) / cols
+            cell_h = (qr_h - top_reserved - (inner_pad_y * 2)) / rows
 
-        grid_items: List[Tuple[str, str]] = CATEGORY_SLUGS + [("", "INFO")]
+            grid_items: List[Tuple[str, str]] = CATEGORY_SLUGS + [("", "INFO")]
 
-        for i in range(len(grid_items)):
-            col = i % cols
-            row = i // cols
-            x0 = qr_x + inner_pad_x + col * cell_w
-            y0 = qr_y + qr_h - top_reserved - inner_pad_y - (row + 1) * cell_h
+            for i in range(len(grid_items)):
+                col = i % cols
+                row = i // cols
+                x0 = qr_x + inner_pad_x + col * cell_w
+                y0 = qr_y + qr_h - top_reserved - inner_pad_y - (row + 1) * cell_h
 
-            slug, label = grid_items[i]
+                slug, label = grid_items[i]
 
-            if slug:
-                vote_url = f"{base_url.rstrip('/')}/v/{show['slug']}/{car_token}/{slug}"
-                qr_img = make_qr(vote_url, box_size=VOTE_QR_BOX_SIZE, border=VOTE_QR_BORDER)
+                if slug:
+                    vote_url = f"{base_url.rstrip('/')}/v/{show['slug']}/{car_token}/{slug}"
+                    qr_img = make_qr(vote_url, box_size=VOTE_QR_BOX_SIZE, border=VOTE_QR_BORDER)
 
-                qr_box = min(cell_w - 16, cell_h - 30)
-                qr_draw_x = x0 + (cell_w - qr_box) / 2
-                qr_draw_y = y0 + 22
+                    qr_box = min(cell_w - 16, cell_h - 30)
+                    qr_draw_x = x0 + (cell_w - qr_box) / 2
+                    qr_draw_y = y0 + 22
 
-                c.saveState()
-                c.setFillColor(colors.white)
-                c.rect(qr_draw_x - 4, qr_draw_y - 4, qr_box + 8, qr_box + 8, stroke=0, fill=1)
-                c.restoreState()
+                    c.saveState()
+                    c.setFillColor(colors.white)
+                    c.rect(qr_draw_x - 4, qr_draw_y - 4, qr_box + 8, qr_box + 8, stroke=0, fill=1)
+                    c.restoreState()
 
-                draw_image_contain(c, qr_img, qr_draw_x, qr_draw_y, qr_box, qr_box)
+                    draw_image_contain(c, qr_img, qr_draw_x, qr_draw_y, qr_box, qr_box)
 
-                c.setFont("Helvetica", 9)
-                c.drawCentredString(x0 + cell_w / 2, y0 + 8, label)
+                    c.setFont("Helvetica", 9)
+                    c.drawCentredString(x0 + cell_w / 2, y0 + 8, label)
 
-            else:
-                c.saveState()
-                c.setFillColor(colors.whitesmoke)
-                c.rect(x0 + 8, y0 + 10, cell_w - 16, cell_h - 20, stroke=0, fill=1)
-                c.restoreState()
+                else:
+                    c.saveState()
+                    c.setFillColor(colors.whitesmoke)
+                    c.rect(x0 + 8, y0 + 10, cell_w - 16, cell_h - 20, stroke=0, fill=1)
+                    c.restoreState()
 
-                c.setFont("Helvetica-Bold", 10)
-                c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 32, "Scan any")
-                c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 46, "code")
+                    c.setFont("Helvetica-Bold", 10)
+                    c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 32, "Scan any")
+                    c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 46, "code")
+                    c.setFont("Helvetica", 10)
+                    c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 74, "Vote for")
+                    c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 88, "this")
+                    c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 102, "vehicle")
+        else:
+            c.setFont("Helvetica-Bold", 18)
+            c.drawCentredString(qr_x + right_w / 2, qr_y + qr_h - 34, card_headline[:40])
+            c.setFont("Helvetica", 11)
+            c.drawCentredString(qr_x + right_w / 2, qr_y + qr_h - 54, card_subheadline[:70])
+
+            qr_img = make_qr(info_qr_url, box_size=REGISTER_QR_BOX_SIZE, border=REGISTER_QR_BORDER)
+            qr_box = min(2.55 * inch, qr_h - 1.45 * inch, right_w * 0.48)
+            qr_draw_x = qr_x + 0.32 * inch
+            qr_draw_y = qr_y + 0.78 * inch
+
+            c.saveState()
+            c.setFillColor(colors.white)
+            c.rect(qr_draw_x - 8, qr_draw_y - 8, qr_box + 16, qr_box + 16, stroke=0, fill=1)
+            c.restoreState()
+            draw_image_contain(c, qr_img, qr_draw_x, qr_draw_y, qr_box, qr_box)
+
+            c.setFont("Helvetica-Bold", 12)
+            c.drawCentredString(qr_draw_x + qr_box / 2, qr_draw_y - 18, info_qr_label[:34])
+
+            text_x = qr_draw_x + qr_box + 0.35 * inch
+            text_top = qr_y + qr_h - 86
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(text_x, text_top, "Event details")
+            c.setFont("Helvetica", 11)
+            yy = text_top - 22
+            for line in wrap_text(card_message, 44)[:8]:
+                c.drawString(text_x, yy, line)
+                yy -= 16
+
+            if show_text("location_name"):
+                yy -= 8
+                c.setFont("Helvetica-Bold", 11)
+                c.drawString(text_x, yy, "Location")
+                yy -= 15
                 c.setFont("Helvetica", 10)
-                c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 74, "Vote for")
-                c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 88, "this")
-                c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - 102, "vehicle")
+                c.drawString(text_x, yy, show_text("location_name")[:48])
+
+            if show_text("date") or show_text("show_start_time") or show_text("show_end_time"):
+                yy -= 22
+                c.setFont("Helvetica-Bold", 11)
+                c.drawString(text_x, yy, "When")
+                yy -= 15
+                c.setFont("Helvetica", 10)
+                when_line = " ".join([p for p in [show_text("date"), show_text("show_start_time"), show_text("show_end_time")] if p])
+                c.drawString(text_x, yy, when_line[:58])
 
         sponsor_band_h = 1.20 * inch
         sponsor_band_y = margin
