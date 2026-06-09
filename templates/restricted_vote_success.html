@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set title = "Vote Saved • " ~ show['title'] %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8 text-center">
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs">Vote saved</div>
+    <h1 class="mt-4 text-3xl font-semibold tracking-tight">Your {{ category_name }} vote was recorded.</h1>
+    <p class="mt-2 text-slate-600">You selected car #{{ car['car_number'] }}.</p>
+    <div class="mt-6 flex flex-wrap justify-center gap-3">
+      <a class="btn btn-primary" href="{{ url_for('restricted_vote_complete', show_slug=show['slug']) }}">View Voting Progress</a>
+      <a class="btn btn-outline" href="{{ url_for('show_page', slug=show['slug']) }}">Back to Show</a>
+    </div>
+  </section>
+</div>
+{% endblock %}

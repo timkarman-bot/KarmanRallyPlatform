@@ -124,9 +124,10 @@
         <select name="voting_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
           <option value="fundraiser_unlimited" {% if (s['voting_mode'] or 'fundraiser_unlimited') == 'fundraiser_unlimited' %}selected{% endif %}>Fundraiser voting</option>
           <option value="restricted_single" {% if (s['voting_mode'] or '') == 'restricted_single' %}selected{% endif %}>Restricted single vote</option>
+          <option value="participant_restricted" {% if (s['voting_mode'] or '') == 'participant_restricted' %}selected{% endif %}>Participant/Judge restricted voting</option>
           <option value="none" {% if (s['voting_mode'] or '') == 'none' %}selected{% endif %}>None — voting disabled</option>
         </select>
-        <div class="mt-1 text-xs text-slate-500">Use None for Cruise In or no-awards events.</div>
+        <div class="mt-1 text-xs text-slate-500">Use Participant/Judge restricted voting for one-vote-per-category participant judging. Use None for Cruise In or no-awards events.</div>
       </div>
 
       <div>
@@ -468,5 +469,56 @@
     </form>
   </section>
   
+
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div>
+        <div class="text-xs font-semibold tracking-wide text-slate-500">PARTICIPANT / JUDGE VOTING</div>
+        <h2 class="mt-1 text-xl font-semibold">Restricted voting access</h2>
+        <p class="mt-1 text-sm text-slate-600">Use this for participant-only judging, staff-issued judge codes, school/team voting later, and one vote per category.</p>
+      </div>
+      <form method="POST" action="{{ url_for('admin_create_judge_code', show_id=s['id']) }}" class="rounded-2xl border border-slate-200 bg-slate-50 p-4 grid gap-3 md:min-w-[360px]">
+        <div class="font-semibold text-slate-900">Create judge access code</div>
+        <input name="display_name" class="rounded-xl border border-slate-200 px-3 py-2" placeholder="Judge name or badge label">
+        <input name="email" class="rounded-xl border border-slate-200 px-3 py-2" placeholder="Email optional">
+        <input name="phone" class="rounded-xl border border-slate-200 px-3 py-2" placeholder="Phone optional">
+        <button class="btn btn-primary" type="submit">Create Judge Code</button>
+      </form>
+    </div>
+
+    <div class="mt-5 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-200 text-left text-slate-500">
+            <th class="py-2 pr-4">Type</th>
+            <th class="py-2 pr-4">Name</th>
+            <th class="py-2 pr-4">Car #</th>
+            <th class="py-2 pr-4">Activated</th>
+            <th class="py-2 pr-4">Access</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for voter in show_voters or [] %}
+          <tr class="border-b border-slate-100">
+            <td class="py-3 pr-4">{{ voter['voter_type'] }}</td>
+            <td class="py-3 pr-4">{{ voter['display_name'] or '—' }}</td>
+            <td class="py-3 pr-4">{{ voter['car_number'] or '—' }}</td>
+            <td class="py-3 pr-4">{{ voter['activated_at'] or 'Not yet' }}</td>
+            <td class="py-3 pr-4">
+              {% if voter['voter_type'] == 'judge' %}
+                <a class="btn btn-outline" target="_blank" href="{{ url_for('judge_vote_access', show_slug=s['slug'], voter_token=voter['voter_token']) }}">Open Judge Link</a>
+              {% else %}
+                <span class="text-slate-500">Participant card QR</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td class="py-5 text-slate-500" colspan="5">No restricted voters created yet. Participant voter records are created when a participant scans their voting access QR.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
 </div>
 {% endblock %}

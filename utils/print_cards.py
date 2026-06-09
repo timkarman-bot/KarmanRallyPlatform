@@ -196,6 +196,15 @@ def build_landscape_cards_pdf(
             return False
         return voting_enabled_by_show()
 
+    def participant_restricted_voting() -> bool:
+        return show_text("voting_mode", "fundraiser_unlimited").lower() == "participant_restricted"
+
+    def car_is_placeholder(row: dict) -> bool:
+        try:
+            return int(row.get("is_placeholder") or 0) == 1
+        except Exception:
+            return False
+
     def info_url() -> str:
         return (
             show_text("cta_url")
@@ -571,16 +580,20 @@ def build_landscape_cards_pdf(
                     0.50 * inch,
                 )
 
+            back_is_vote_access = participant_restricted_voting() and not car_is_placeholder(dict(car))
+            back_title = "VOTING ACCESS" if back_is_vote_access else "REGISTER THIS CAR"
+            back_subtitle = f"Activate voting access for car #{car_number}" if back_is_vote_access else f"Claim car #{car_number} and complete registration"
+
             c.setFont("Helvetica-Bold", 24)
-            c.drawRightString(page_w - margin - 10, back_header_y + 0.58 * inch, "REGISTER THIS CAR")
+            c.drawRightString(page_w - margin - 10, back_header_y + 0.58 * inch, back_title)
             c.setFont("Helvetica", 11)
             c.drawRightString(
                 page_w - margin - 10,
                 back_header_y + 0.30 * inch,
-                f"Claim car #{car_number} and complete registration",
+                back_subtitle,
             )
 
-            claim_url = f"{base_url.rstrip('/')}/claim/{show['slug']}/{car_token}"
+            claim_url = f"{base_url.rstrip('/')}/vote-access/{show['slug']}/{car_token}" if back_is_vote_access else f"{base_url.rstrip('/')}/claim/{show['slug']}/{car_token}"
             qr_back = make_qr(claim_url, box_size=REGISTER_QR_BOX_SIZE, border=REGISTER_QR_BORDER)
 
             qr_box_size = 2.60 * inch
@@ -596,7 +609,7 @@ def build_landscape_cards_pdf(
             draw_image_contain(c, qr_back, qx, qy, qr_box_size, qr_box_size)
 
             c.setFont("Helvetica-Bold", 12)
-            c.drawCentredString(qx + qr_box_size / 2, qy - 4, "SCAN TO REGISTER THIS CAR")
+            c.drawCentredString(qx + qr_box_size / 2, qy - 4, "SCAN FOR VOTING ACCESS" if back_is_vote_access else "SCAN TO REGISTER THIS CAR")
 
             steps_x = qx + qr_box_size + 0.45 * inch
             steps_y = qy + qr_box_size - 2
@@ -607,12 +620,20 @@ def build_landscape_cards_pdf(
             c.drawString(steps_x + 12, steps_y, "Quick steps")
 
             c.setFont("Helvetica", 12)
-            step_lines = [
-                "1. Scan the QR code.",
-                "2. Enter owner and vehicle information.",
-                "3. Sign the waiver electronically.",
-                "4. Payment was already collected at the booth.",
-            ]
+            if back_is_vote_access:
+                step_lines = [
+                    "1. Scan the QR code to activate voting access.",
+                    "2. Scan vehicle voting QR codes on the front of cards.",
+                    "3. Vote once per category.",
+                    "4. You may change votes until voting closes.",
+                ]
+            else:
+                step_lines = [
+                    "1. Scan the QR code.",
+                    "2. Enter owner and vehicle information.",
+                    "3. Sign the waiver electronically.",
+                    "4. Payment was already collected at the booth.",
+                ]
             yy = steps_y - 26
             for line in step_lines:
                 c.drawString(steps_x + 16, yy, line)

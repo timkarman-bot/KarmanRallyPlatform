@@ -139,6 +139,15 @@ from database import (
     admin_user_can_access_show,
     list_show_ids_for_admin_user,
     list_shows_admin_for_user,
+    get_or_create_participant_voter,
+    create_judge_voter,
+    get_show_voter_by_token,
+    activate_show_voter,
+    list_show_voters,
+    get_restricted_vote,
+    upsert_restricted_vote,
+    restricted_vote_progress,
+    restricted_leaderboard_by_category,
 )
 
 
@@ -258,9 +267,9 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.9.0-beta"
+APP_VERSION = "0.9.1-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Show Ownership / Role-Based Admin Beta"
+APP_RELEASE_NAME = "Participant-Restricted Voting Beta"
 
 
 def prereg_allowed(show) -> bool:
@@ -399,7 +408,11 @@ def _show_voting_mode(show: Any) -> str:
         return "fundraiser_unlimited"
     value = (show["voting_mode"] if "voting_mode" in show.keys() else "fundraiser_unlimited") or "fundraiser_unlimited"
     value = str(value).strip().lower()
-    return value if value in {"fundraiser_unlimited", "restricted_single", "none"} else "fundraiser_unlimited"
+    return value if value in {"fundraiser_unlimited", "restricted_single", "participant_restricted", "none"} else "fundraiser_unlimited"
+
+
+def _show_participant_voting(show: Any) -> bool:
+    return _show_voting_mode(show) == "participant_restricted"
 
 
 def _show_voting_disabled(show: Any) -> bool:
@@ -411,9 +424,11 @@ def _show_voting_disabled(show: Any) -> bool:
             return True
     except Exception:
         return True
-    if _show_voting_mode(show) == "none":
+    voting_mode = _show_voting_mode(show)
+    if voting_mode == "none":
         return True
-    if _show_payment_mode(show) == "none":
+    # Participant-restricted voting does not require a payment mode.
+    if voting_mode != "participant_restricted" and _show_payment_mode(show) == "none":
         return True
     try:
         return str(show["show_type"] or "").strip().lower() == "cruise_in"
@@ -440,6 +455,27 @@ def _show_max_votes_per_checkout(show: Any) -> int:
         return max(1, int(show["max_votes_per_checkout"] or 50))
     except Exception:
         return 50
+
+
+def _voter_session_key(show_id: int) -> str:
+    return f"restricted_voter_token_{int(show_id)}"
+
+
+def _active_restricted_voter(show: Any):
+    if not show:
+        return None
+    token = session.get(_voter_session_key(int(show["id"])), "")
+    if not token:
+        return None
+    return get_show_voter_by_token(int(show["id"]), token)
+
+
+def _participant_category_keys() -> list[str]:
+    return list(CATEGORY_SLUGS.keys())
+
+
+def _participant_category_name(category_key: str) -> str:
+    return CATEGORY_SLUGS.get(category_key, category_key)
 
 
 def _show_preset_vote_options(show: Any) -> list[int]:
@@ -2297,6 +2333,30 @@ def vote_qty_page(show_slug: str, car_token: str, category_slug: str):
     if _show_voting_disabled(show):
         return render_template("voting_closed.html", show=show)
 
+    if _show_participant_voting(show):
+        voter = _active_restricted_voter(show)
+        if not voter:
+            return render_template(
+                "restricted_vote_not_authorized.html",
+                show=show,
+                car=car,
+                category_slug=category_slug,
+                category_name=CATEGORY_SLUGS[category_slug],
+            ), 403
+        existing_vote = get_restricted_vote(int(show["id"]), int(voter["id"]), category_slug)
+        progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+        return render_template(
+            "restricted_vote.html",
+            show=show,
+            car=car,
+            voter=voter,
+            category_slug=category_slug,
+            category_name=CATEGORY_SLUGS[category_slug],
+            existing_vote=existing_vote,
+            progress=progress,
+            category_names=CATEGORY_SLUGS,
+        )
+
     return render_template(
         "vote_qty.html",
         show=show,
@@ -2309,6 +2369,131 @@ def vote_qty_page(show_slug: str, car_token: str, category_slug: str):
         preset_vote_options=_show_preset_vote_options(show),
         allow_custom_votes=_show_allow_custom_votes(show),
         max_votes_per_checkout=_show_max_votes_per_checkout(show),
+    )
+
+
+@app.get("/vote-access/<show_slug>/<car_token>")
+def participant_vote_access(show_slug: str, car_token: str):
+    show = get_show_by_slug(show_slug)
+    if not show:
+        return "Show not found.", 404
+    car = get_show_car_private_by_token(int(show["id"]), car_token)
+    if not car:
+        return "Voting access not found.", 404
+    if int(car["is_placeholder"] or 0) == 1:
+        return render_template("restricted_vote_not_authorized.html", show=show, car=car, category_slug="", category_name=""), 403
+    voter = get_or_create_participant_voter(int(show["id"]), int(car["id"]))
+    voter = activate_show_voter(int(show["id"]), voter["voter_token"])
+    session[_voter_session_key(int(show["id"]))] = voter["voter_token"]
+    progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+    return render_template(
+        "voter_activate.html",
+        show=show,
+        car=car,
+        voter=voter,
+        progress=progress,
+        category_names=CATEGORY_SLUGS,
+    )
+
+
+@app.get("/judge-access/<show_slug>/<voter_token>")
+def judge_vote_access(show_slug: str, voter_token: str):
+    show = get_show_by_slug(show_slug)
+    if not show:
+        return "Show not found.", 404
+    voter = activate_show_voter(int(show["id"]), voter_token)
+    if not voter:
+        return "Judge access not found or inactive.", 404
+    session[_voter_session_key(int(show["id"]))] = voter["voter_token"]
+    progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+    return render_template(
+        "voter_activate.html",
+        show=show,
+        car=None,
+        voter=voter,
+        progress=progress,
+        category_names=CATEGORY_SLUGS,
+    )
+
+
+@app.post("/restricted-vote")
+@rate_limit("restricted_vote", 60, 300)
+def restricted_vote_submit():
+    show_slug = request.form.get("show_slug", "").strip()
+    car_token = request.form.get("car_token", "").strip()
+    category_slug = request.form.get("category_slug", "").strip()
+
+    show = get_show_by_slug(show_slug)
+    if not show:
+        return "Show not found.", 404
+    if _show_voting_disabled(show) or not _show_participant_voting(show):
+        return render_template("voting_closed.html", show=show), 403
+    if category_slug not in CATEGORY_SLUGS:
+        return "Invalid category.", 404
+
+    voter = _active_restricted_voter(show)
+    if not voter:
+        return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug=category_slug, category_name=CATEGORY_SLUGS[category_slug]), 403
+
+    car = get_show_car_public_by_token(int(show["id"]), car_token)
+    if not car:
+        return "Car not found.", 404
+
+    # Prevent participants from voting for their own car in restricted participant voting.
+    if voter["voter_type"] == "participant" and voter["show_car_id"] and int(voter["show_car_id"]) == int(car["id"]):
+        existing_vote = get_restricted_vote(int(show["id"]), int(voter["id"]), category_slug)
+        progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+        return render_template(
+            "restricted_vote.html",
+            show=show,
+            car=car,
+            voter=voter,
+            category_slug=category_slug,
+            category_name=CATEGORY_SLUGS[category_slug],
+            existing_vote=existing_vote,
+            progress=progress,
+            category_names=CATEGORY_SLUGS,
+            error="You cannot vote for your own vehicle in participant voting.",
+        ), 400
+
+    upsert_restricted_vote(
+        int(show["id"]),
+        int(voter["id"]),
+        category_slug,
+        int(car["id"]),
+        int(car["judging_class_id"]) if "judging_class_id" in car.keys() and car["judging_class_id"] else None,
+        1,
+    )
+    progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+    if progress.get("is_complete"):
+        return redirect(url_for("restricted_vote_complete", show_slug=show_slug))
+    return render_template(
+        "restricted_vote_success.html",
+        show=show,
+        car=car,
+        voter=voter,
+        category_slug=category_slug,
+        category_name=CATEGORY_SLUGS[category_slug],
+        progress=progress,
+        category_names=CATEGORY_SLUGS,
+    )
+
+
+@app.get("/restricted-vote/<show_slug>/complete")
+def restricted_vote_complete(show_slug: str):
+    show = get_show_by_slug(show_slug)
+    if not show:
+        return "Show not found.", 404
+    voter = _active_restricted_voter(show)
+    if not voter:
+        return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug="", category_name=""), 403
+    progress = restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys())
+    return render_template(
+        "restricted_vote_complete.html",
+        show=show,
+        voter=voter,
+        progress=progress,
+        category_names=CATEGORY_SLUGS,
     )
 
 
@@ -2326,6 +2511,8 @@ def create_checkout_session():
 
     if _show_voting_disabled(show):
         return jsonify({"ok": False, "error": "Voting is disabled or currently closed for this event."}), 403
+    if _show_participant_voting(show):
+        return jsonify({"ok": False, "error": "This show uses participant-restricted voting. Scan your participant voting access QR first."}), 403
 
     if category_slug not in CATEGORY_SLUGS:
         return jsonify({"ok": False, "error": "Invalid category."}), 400
@@ -3239,7 +3426,24 @@ def admin_show_detail(show_id: int):
         waiver_templates=list_waiver_templates(),
         slots_by_show=slots_by_show,
         classes_by_show=classes_by_show,
+        show_voters=list_show_voters(int(show_id)),
     )
+
+
+@app.post("/admin/shows/<int:show_id>/judge-code")
+@require_admin
+def admin_create_judge_code(show_id: int):
+    _require_show_access(show_id)
+    show = get_show_by_id(show_id)
+    if not show:
+        abort(404)
+    display_name = request.form.get("display_name", "Judge").strip() or "Judge"
+    email = request.form.get("email", "").strip().lower()
+    phone = request.form.get("phone", "").strip()
+    voter = create_judge_voter(int(show_id), display_name, email, phone)
+    access_url = _abs_url(url_for("judge_vote_access", show_slug=show["slug"], voter_token=voter["voter_token"]))
+    flash(f"Judge code created for {display_name}. Access link: {access_url}", "ok")
+    return redirect(url_for("admin_show_detail", show_id=show_id))
 
 
 def _read_uploaded_csv_rows(file_storage) -> list[dict[str, Any]]:

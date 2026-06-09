@@ -157,6 +157,9 @@ def init_db() -> None:
         "ALTER TABLE shows ADD COLUMN card_headline TEXT",
         "ALTER TABLE shows ADD COLUMN card_subheadline TEXT",
         "ALTER TABLE shows ADD COLUMN card_layout_mode TEXT NOT NULL DEFAULT 'auto'",
+        "ALTER TABLE shows ADD COLUMN participant_voting_enabled INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shows ADD COLUMN participant_vote_change_allowed INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE shows ADD COLUMN participant_voting_completion_message TEXT",
     ]:
         try:
             cur.execute(sql)
@@ -672,6 +675,58 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_admin_users_active ON admin_users(is_active)",
         "CREATE INDEX IF NOT EXISTS idx_admin_user_show_roles_user ON admin_user_show_roles(admin_user_id)",
         "CREATE INDEX IF NOT EXISTS idx_admin_user_show_roles_show ON admin_user_show_roles(show_id)",
+    ]:
+        cur.execute(sql)
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_voters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            show_car_id INTEGER,
+            voter_token TEXT NOT NULL UNIQUE,
+            voter_type TEXT NOT NULL DEFAULT 'participant',
+            display_name TEXT,
+            email TEXT,
+            phone TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            activated_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT,
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS restricted_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            voter_id INTEGER NOT NULL,
+            category_key TEXT NOT NULL,
+            judging_class_id INTEGER,
+            selected_show_car_id INTEGER NOT NULL,
+            vote_weight INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT,
+            UNIQUE(show_id, voter_id, category_key),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(voter_id) REFERENCES show_voters(id),
+            FOREIGN KEY(judging_class_id) REFERENCES show_judging_classes(id),
+            FOREIGN KEY(selected_show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_show_voters_show ON show_voters(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_voters_car ON show_voters(show_id, show_car_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_voters_token ON show_voters(voter_token)",
+        "CREATE INDEX IF NOT EXISTS idx_restricted_votes_show ON restricted_votes(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_restricted_votes_voter ON restricted_votes(voter_id)",
+        "CREATE INDEX IF NOT EXISTS idx_restricted_votes_selected_car ON restricted_votes(selected_show_car_id)",
     ]:
         cur.execute(sql)
 
@@ -2948,6 +3003,247 @@ def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
     conn.commit()
     conn.close()
     return created
+
+
+# PARTICIPANT / RESTRICTED VOTING
+
+def _restricted_voter_token() -> str:
+    return secrets.token_urlsafe(18)
+
+
+def get_or_create_participant_voter(show_id: int, show_car_id: int) -> sqlite3.Row:
+    """Return the participant voter row tied to a registered show car."""
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        row = cur.execute(
+            """
+            SELECT * FROM show_voters
+            WHERE show_id = ? AND show_car_id = ? AND voter_type = 'participant'
+            LIMIT 1
+            """,
+            (int(show_id), int(show_car_id)),
+        ).fetchone()
+        if row:
+            return row
+
+        car = cur.execute(
+            """
+            SELECT sc.*, p.name AS owner_name, p.email AS owner_email, p.phone AS owner_phone
+            FROM show_cars sc
+            JOIN people p ON p.id = sc.person_id
+            WHERE sc.show_id = ? AND sc.id = ?
+            LIMIT 1
+            """,
+            (int(show_id), int(show_car_id)),
+        ).fetchone()
+        if not car:
+            raise ValueError("Show car not found.")
+
+        token = _restricted_voter_token()
+        cur.execute(
+            """
+            INSERT INTO show_voters
+                (show_id, show_car_id, voter_token, voter_type, display_name, email, phone, is_active, updated_at)
+            VALUES (?, ?, ?, 'participant', ?, ?, ?, 1, datetime('now'))
+            """,
+            (
+                int(show_id),
+                int(show_car_id),
+                token,
+                car["owner_name"] or f"Car #{car['car_number']}",
+                car["owner_email"] or "",
+                car["owner_phone"] or "",
+            ),
+        )
+        conn.commit()
+        row = cur.execute("SELECT * FROM show_voters WHERE id = ?", (int(cur.lastrowid),)).fetchone()
+        return row
+    finally:
+        conn.close()
+
+
+def create_judge_voter(show_id: int, display_name: str = "Judge", email: str = "", phone: str = "") -> sqlite3.Row:
+    conn = _conn()
+    cur = conn.cursor()
+    token = _restricted_voter_token()
+    cur.execute(
+        """
+        INSERT INTO show_voters
+            (show_id, show_car_id, voter_token, voter_type, display_name, email, phone, is_active, updated_at)
+        VALUES (?, NULL, ?, 'judge', ?, ?, ?, 1, datetime('now'))
+        """,
+        (int(show_id), token, (display_name or "Judge").strip(), (email or "").strip(), (phone or "").strip()),
+    )
+    conn.commit()
+    row = cur.execute("SELECT * FROM show_voters WHERE id = ?", (int(cur.lastrowid),)).fetchone()
+    conn.close()
+    return row
+
+
+def get_show_voter_by_token(show_id: int, voter_token: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT * FROM show_voters
+        WHERE show_id = ? AND voter_token = ? AND is_active = 1
+        LIMIT 1
+        """,
+        (int(show_id), (voter_token or "").strip()),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def activate_show_voter(show_id: int, voter_token: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    cur = conn.cursor()
+    row = cur.execute(
+        """
+        SELECT * FROM show_voters
+        WHERE show_id = ? AND voter_token = ? AND is_active = 1
+        LIMIT 1
+        """,
+        (int(show_id), (voter_token or "").strip()),
+    ).fetchone()
+    if row:
+        cur.execute(
+            """
+            UPDATE show_voters
+            SET activated_at = COALESCE(activated_at, datetime('now')), updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (int(row["id"]),),
+        )
+        conn.commit()
+        row = cur.execute("SELECT * FROM show_voters WHERE id = ?", (int(row["id"]),)).fetchone()
+    conn.close()
+    return row
+
+
+def list_show_voters(show_id: int, voter_type: str = "") -> List[sqlite3.Row]:
+    conn = _conn()
+    params: list[Any] = [int(show_id)]
+    where = "WHERE v.show_id = ?"
+    if voter_type:
+        where += " AND v.voter_type = ?"
+        params.append(voter_type)
+    rows = conn.execute(
+        f"""
+        SELECT v.*, sc.car_number
+        FROM show_voters v
+        LEFT JOIN show_cars sc ON sc.id = v.show_car_id
+        {where}
+        ORDER BY v.voter_type ASC, v.id DESC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_restricted_vote(show_id: int, voter_id: int, category_key: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT rv.*, sc.car_number, sc.year, sc.make, sc.model, p.name AS owner_name
+        FROM restricted_votes rv
+        JOIN show_cars sc ON sc.id = rv.selected_show_car_id
+        JOIN people p ON p.id = sc.person_id
+        WHERE rv.show_id = ? AND rv.voter_id = ? AND rv.category_key = ?
+        LIMIT 1
+        """,
+        (int(show_id), int(voter_id), (category_key or "").strip()),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def upsert_restricted_vote(
+    show_id: int,
+    voter_id: int,
+    category_key: str,
+    selected_show_car_id: int,
+    judging_class_id: Optional[int] = None,
+    vote_weight: int = 1,
+) -> sqlite3.Row:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO restricted_votes
+            (show_id, voter_id, category_key, judging_class_id, selected_show_car_id, vote_weight, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(show_id, voter_id, category_key)
+        DO UPDATE SET
+            judging_class_id = excluded.judging_class_id,
+            selected_show_car_id = excluded.selected_show_car_id,
+            vote_weight = excluded.vote_weight,
+            updated_at = datetime('now')
+        """,
+        (
+            int(show_id),
+            int(voter_id),
+            (category_key or "").strip(),
+            int(judging_class_id) if judging_class_id else None,
+            int(selected_show_car_id),
+            int(vote_weight or 1),
+        ),
+    )
+    conn.commit()
+    row = cur.execute(
+        """
+        SELECT * FROM restricted_votes
+        WHERE show_id = ? AND voter_id = ? AND category_key = ?
+        LIMIT 1
+        """,
+        (int(show_id), int(voter_id), (category_key or "").strip()),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def restricted_vote_progress(show_id: int, voter_id: int, category_keys: List[str]) -> Dict[str, Any]:
+    keys = [str(k) for k in (category_keys or []) if str(k).strip()]
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT category_key FROM restricted_votes
+        WHERE show_id = ? AND voter_id = ?
+        """,
+        (int(show_id), int(voter_id)),
+    ).fetchall()
+    conn.close()
+    completed = {r["category_key"] for r in rows}
+    remaining = [k for k in keys if k not in completed]
+    return {
+        "completed_keys": completed,
+        "remaining_keys": remaining,
+        "completed_count": len([k for k in keys if k in completed]),
+        "total_count": len(keys),
+        "is_complete": bool(keys) and not remaining,
+    }
+
+
+def restricted_leaderboard_by_category(show_id: int) -> Dict[str, List[Tuple[int, int]]]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT rv.category_key, sc.car_number, SUM(rv.vote_weight) AS total_votes
+        FROM restricted_votes rv
+        JOIN show_cars sc ON sc.id = rv.selected_show_car_id
+        WHERE rv.show_id = ?
+        GROUP BY rv.category_key, sc.car_number
+        ORDER BY rv.category_key ASC, total_votes DESC, sc.car_number ASC
+        """,
+        (int(show_id),),
+    ).fetchall()
+    conn.close()
+    out: Dict[str, List[Tuple[int, int]]] = {}
+    for r in rows:
+        out.setdefault(r["category_key"], [])
+        out[r["category_key"]].append((int(r["car_number"]), int(r["total_votes"] or 0)))
+    return out
 
 # VOTING
 

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% set title = "Voting Access Active • " ~ show['title'] %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8 text-center">
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs">Access active</div>
+    <h1 class="mt-4 text-3xl font-semibold tracking-tight">Voting access is active.</h1>
+    <p class="mt-2 text-slate-600">You can now scan vehicle voting QR codes and vote once per category.</p>
+    {% if car %}
+      <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">Activated for car #{{ car['car_number'] }}.</div>
+    {% endif %}
+  </section>
+
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <h2 class="text-xl font-semibold">Voting progress</h2>
+    <div class="mt-3 grid gap-2 sm:grid-cols-2">
+      {% for key, label in category_names.items() %}
+        <div class="rounded-2xl border px-4 py-3 {% if key in progress['completed_keys'] %}border-emerald-200 bg-emerald-50 text-emerald-800{% else %}border-slate-200 bg-slate-50 text-slate-600{% endif %}">
+          {% if key in progress['completed_keys'] %}✓{% else %}○{% endif %} {{ label }}
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

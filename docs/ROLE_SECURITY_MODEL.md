@@ -1,54 +1,103 @@
 # Role Security Model
 
-Version: 0.9.0-beta
+Version: 0.9.1-beta
 
 ## Purpose
 
-This release introduces show ownership and role-based administration so the platform can support multiple organizers without exposing every show or back-office function to every user.
+This document defines administrative and show-support roles for the Karman Rally Platform.
 
-## Roles
+## Platform-Level Roles
 
 ### Super Admin
-Can see all shows, create shows, archive shows, set active/upcoming/past status, manage users, assign roles, and access all admin tools.
+Usually Karman / platform owner.
 
-### Show Owner
-Can see and manage only assigned shows.
+Can:
+- View all shows
+- Manage all shows
+- Manage all admin users
+- Assign users to shows
+- Export data
+- Access global contact history
+- Manage platform settings
 
-### Registrar
-Intended for show-day registration, check-in, placeholder, and registration correction workflows for assigned shows.
+### Platform Admin
+Future optional role.
+
+Can:
+- Support platform operations
+- Assist show owners
+- View assigned operational areas
+
+## Show-Level Roles
+
+### Owner
+The show owner or organizer.
+
+Can:
+- Manage assigned show
+- Edit show details
+- Manage registration settings
+- Manage judging classes
+- Import/export assigned show data
+- View assigned show registrations
+- Manage assigned show staff
+
+Cannot:
+- View unrelated shows
+- View unrelated organizer data
+- Manage platform-wide settings unless also Super Admin
+
+### Manager
+Trusted show operator.
+
+Can:
+- Run most show operations
+- Manage check-in
+- Manage placeholders
+- Edit registrations
+- Print cards
+- View assigned show reports
+
+Cannot:
+- Delete/archive shows
+- Manage platform settings
+- View unrelated shows
+
+### Staff
+Registration table / show-day staff.
+
+Can:
+- Search registrations for assigned show
+- Check in cars
+- Mark cash paid
+- Manage placeholders
+- Print cards
+
+Cannot:
+- Edit show setup
+- Manage users
+- Export full data unless explicitly allowed
 
 ### Judge
-Reserved for judging and voting workflows for assigned shows.
+Voting or judging access.
 
-### Volunteer
-Reserved for limited show-day workflows.
+Can:
+- Access judging/voting tools for assigned show
+- Submit or manage judging results if enabled
 
-## Backward Compatibility
+Cannot:
+- View full registration details
+- Edit registrations
+- Manage show setup
 
-The existing Railway `ADMIN_PASSWORD` or `ADMIN_PASSWORD_HASH` login remains available as a legacy super-admin fallback.
+## Rule
 
-The new login form supports:
-- email + password for named admin users
-- password only for the legacy super-admin login
+Every admin route must verify:
 
-## New Database Tables
+1. User is authenticated.
+2. User has access to the show.
+3. User role allows the requested action.
 
-- `admin_users`
-- `admin_user_show_roles`
+## Recommended Role Order
 
-## Required Production Validation
-
-1. Legacy password-only admin login still works.
-2. Super admin can open `/admin/users`.
-3. Super admin can create a show owner.
-4. Show owner can log in with email/password.
-5. Show owner sees only assigned shows.
-6. Show owner cannot create shows.
-7. Show owner cannot set global active/upcoming/past status.
-8. Show owner can manage assigned show details.
-9. Unassigned show access returns 403.
-10. `/admin/version` reports 0.9.0-beta.
-
-## Important Notes
-
-This is the first multi-tenant administration foundation. It does not yet fully isolate every future module such as sponsor management by role. Those should be tightened in follow-up patches as each module is made tenant-aware.
+super_admin > owner > manager > staff > judge

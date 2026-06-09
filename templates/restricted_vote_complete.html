@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set title = "Voting Progress • " ~ show['title'] %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8 text-center">
+    {% if progress['is_complete'] %}
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs">Voting complete</div>
+      <h1 class="mt-4 text-3xl font-semibold tracking-tight">Voting Complete</h1>
+      <p class="mt-2 text-slate-600">Thank you for participating.</p>
+    {% else %}
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-600 text-white text-xs">Voting in progress</div>
+      <h1 class="mt-4 text-3xl font-semibold tracking-tight">{{ progress['completed_count'] }} of {{ progress['total_count'] }} categories complete</h1>
+      <p class="mt-2 text-slate-600">Scan a vehicle QR code to complete the remaining categories.</p>
+    {% endif %}
+  </section>
+
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <h2 class="text-xl font-semibold">Category checklist</h2>
+    <div class="mt-3 grid gap-2 sm:grid-cols-2">
+      {% for key, label in category_names.items() %}
+        <div class="rounded-2xl border px-4 py-3 {% if key in progress['completed_keys'] %}border-emerald-200 bg-emerald-50 text-emerald-800{% else %}border-slate-200 bg-slate-50 text-slate-600{% endif %}">
+          {% if key in progress['completed_keys'] %}✓{% else %}○{% endif %} {{ label }}
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

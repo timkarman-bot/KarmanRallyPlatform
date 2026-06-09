@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% set title = "Voting Access Required • " ~ (show['title'] if show else 'Show') %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8">
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-600 text-white text-xs">Voting access required</div>
+    <h1 class="mt-4 text-3xl font-semibold tracking-tight">Participant or judge access is required.</h1>
+    <p class="mt-2 text-slate-700">This show uses restricted voting. Scan the voting access QR code from the back of your windshield card, or use a staff-issued judge access link.</p>
+    {% if car %}
+      <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">You attempted to vote for car #{{ car['car_number'] }} in {{ category_name }}.</div>
+    {% endif %}
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a class="btn btn-outline" href="{{ url_for('show_page', slug=show['slug']) if show else url_for('home') }}">Back to show</a>
+    </div>
+  </section>
+</div>
+{% endblock %}
