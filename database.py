@@ -2108,6 +2108,15 @@ def update_show_car_admin_registration(
         if payment_status not in valid_statuses:
             payment_status = car["registration_payment_status"] or "pending"
 
+        # Capacity release rule:
+        # Canceled, refunded, or removed registrations do not hold a car spot.
+        # This allows registration to reopen automatically when capacity becomes available.
+        # A hard admin close still wins because prereg_allowed(show) is checked before capacity.
+        releases_capacity = payment_status in {"canceled", "refunded", "removed"}
+        if releases_capacity:
+            slot_ids = []
+            primary_slot_id = None
+
         cur.execute(
             """
             UPDATE people
@@ -2149,6 +2158,12 @@ def update_show_car_admin_registration(
             "DELETE FROM show_car_registration_slots WHERE show_id = ? AND show_car_id = ?",
             (int(show_id), int(show_car_id)),
         )
+
+        # If the registration was canceled/refunded/removed, leave it detached from all slots.
+        # This frees both overall show capacity and per-slot capacity.
+        if releases_capacity:
+            conn.commit()
+            return
 
         for slot_id in slot_ids:
             cur.execute(
