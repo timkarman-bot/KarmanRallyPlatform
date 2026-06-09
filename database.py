@@ -162,17 +162,41 @@ def init_db() -> None:
             cur.execute(sql)
         except sqlite3.OperationalError:
             pass
-
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_judging_classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            class_name TEXT,
+            class_code TEXT,
+            description TEXT,
+            year_min INTEGER,
+            year_max INTEGER,
+            make_contains TEXT,
+            model_contains TEXT,
+            keyword_contains TEXT,
+            award_places INTEGER NOT NULL DEFAULT 3,
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+    
     # Judging class table migrations
     # Safe for existing Railway databases where the table may already exist
     # but may be missing newer columns.
     for sql in [
         "ALTER TABLE show_judging_classes ADD COLUMN class_name TEXT",
         "ALTER TABLE show_judging_classes ADD COLUMN class_code TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN description TEXT",
         "ALTER TABLE show_judging_classes ADD COLUMN year_min INTEGER",
         "ALTER TABLE show_judging_classes ADD COLUMN year_max INTEGER",
         "ALTER TABLE show_judging_classes ADD COLUMN make_contains TEXT",
         "ALTER TABLE show_judging_classes ADD COLUMN model_contains TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN keyword_contains TEXT",
         "ALTER TABLE show_judging_classes ADD COLUMN award_places INTEGER NOT NULL DEFAULT 3",
         "ALTER TABLE show_judging_classes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE show_judging_classes ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
@@ -180,8 +204,7 @@ def init_db() -> None:
         try:
             cur.execute(sql)
         except sqlite3.OperationalError:
-            pass
-        
+            pass    
     try:
         cur.execute("ALTER TABLE waiver_templates ADD COLUMN preset_key TEXT NOT NULL DEFAULT 'standard'")
     except sqlite3.OperationalError:
