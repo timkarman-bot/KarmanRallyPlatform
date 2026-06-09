@@ -1,794 +1,124 @@
 {% extends "base.html" %}
-{% set title = "Manage Shows • Karman Kar Shows & Events" %}
+{% set title = "Shows • Karman Kar Shows & Events" %}
+
+{% macro show_table(title, rows, empty_text, collapsed=False) %}
+<section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+  {% if collapsed %}<details>{% endif %}
+  {% if collapsed %}<summary class="cursor-pointer list-none">{% endif %}
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="text-xs font-semibold tracking-wide text-slate-500">{{ title.upper() }}</div>
+      <h2 class="mt-1 text-2xl font-semibold text-slate-900">{{ title }}</h2>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">{{ rows|length }} show{{ '' if rows|length == 1 else 's' }}</div>
+  </div>
+  {% if collapsed %}</summary>{% endif %}
+
+  {% if rows %}
+  <div class="mt-5 overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-500 border-b border-slate-200">
+          <th class="py-2 pr-4">Show</th>
+          <th class="py-2 pr-4">Main Date</th>
+          <th class="py-2 pr-4">Location</th>
+          <th class="py-2 pr-4">Status</th>
+          <th class="py-2 pr-4">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in rows %}
+        <tr class="border-b border-slate-100 align-top">
+          <td class="py-3 pr-4">
+            <a class="font-semibold text-slate-900 hover:underline" href="{{ url_for('admin_show_detail', show_id=s['id']) }}">{{ s['title'] }}</a>
+            <div class="text-xs text-slate-500">{{ s['slug'] }}</div>
+          </td>
+          <td class="py-3 pr-4 whitespace-nowrap">{{ s['date'] or '—' }}</td>
+          <td class="py-3 pr-4">{{ s['location_name'] or '—' }}</td>
+          <td class="py-3 pr-4">
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">{{ s['status'] or 'draft' }}</span>
+              {% if s['is_active'] == 1 %}<span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Active</span>{% endif %}
+            </div>
+          </td>
+          <td class="py-3 pr-4">
+            <div class="flex flex-wrap gap-2">
+              <a class="btn btn-outline" href="{{ url_for('admin_show_detail', show_id=s['id']) }}">Manage</a>
+              <a class="btn btn-outline" href="{{ url_for('admin_show_import', show_id=s['id']) }}">Import</a>
+              <a class="btn btn-outline" href="{{ url_for('admin_export_show_zip', show_id=s['id']) }}">Export</a>
+              <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Active</button></form>
+              <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Upcoming</button></form>
+              <form method="POST" action="{{ url_for('admin_shows_archive', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Archive</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="mt-4 text-sm text-slate-500">{{ empty_text }}</p>
+  {% endif %}
+  {% if collapsed %}</details>{% endif %}
+</section>
+{% endmacro %}
 
 {% block content %}
 <div class="max-w-6xl mx-auto space-y-8">
-
-  <div>
-    <h1 class="text-3xl font-semibold">Manage Shows</h1>
-    <p class="mt-2 text-slate-600">
-      Create new shows, update existing shows, upload flyers, and manage timing details.
-    </p>
+  <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div>
+        <h1 class="text-3xl font-semibold">Shows</h1>
+        <p class="mt-2 text-slate-600">Clean list view. Click Manage to edit details, schedules, classes, card settings, and imports.</p>
+      </div>
+      <a class="btn btn-primary" href="#create-show">Create New Show</a>
+    </div>
   </div>
-
 
   {% if saved_exports %}
   <section class="rounded-3xl border border-emerald-200 bg-emerald-50 p-6">
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <div>
-        <div class="text-xs font-semibold tracking-wide text-emerald-700">SAVED EXPORTS</div>
-        <h2 class="mt-1 text-2xl font-semibold text-slate-900">Show Data Backups Saved on Railway</h2>
-        <p class="mt-1 text-sm text-emerald-900">These ZIP files are saved on the Railway volume at /data/exports and can be downloaded anytime.</p>
+    <details>
+      <summary class="cursor-pointer text-sm font-semibold text-emerald-800">Saved exports on Railway ({{ saved_exports|length }})</summary>
+      <div class="mt-4 overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead><tr class="text-left text-emerald-900 border-b border-emerald-200"><th class="py-2 pr-4">File</th><th class="py-2 pr-4">Saved</th><th class="py-2 pr-4">Download</th></tr></thead>
+          <tbody>{% for export in saved_exports[:10] %}<tr class="border-b border-emerald-100"><td class="py-2 pr-4">{{ export.filename }}</td><td class="py-2 pr-4">{{ export.modified_at }}</td><td class="py-2 pr-4"><a class="btn btn-outline" href="{{ url_for('admin_download_saved_export', filename=export.filename) }}">Download ZIP</a></td></tr>{% endfor %}</tbody>
+        </table>
       </div>
-    </div>
-    <div class="mt-5 overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead>
-          <tr class="text-left text-slate-600 border-b border-emerald-200">
-            <th class="py-2 pr-4">File</th>
-            <th class="py-2 pr-4">Saved</th>
-            <th class="py-2 pr-4">Size</th>
-            <th class="py-2 pr-4">Download</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for export in saved_exports[:10] %}
-          <tr class="border-b border-emerald-100">
-            <td class="py-3 pr-4 font-medium text-slate-900">{{ export.filename }}</td>
-            <td class="py-3 pr-4 whitespace-nowrap">{{ export.modified_at }}</td>
-            <td class="py-3 pr-4">{{ '%.1f'|format((export.size_bytes or 0) / 1024) }} KB</td>
-            <td class="py-3 pr-4">
-              <a class="btn btn-outline" href="{{ url_for('admin_download_saved_export', filename=export.filename) }}">Download ZIP</a>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    </details>
   </section>
   {% endif %}
 
   {% if pending_vote_reviews %}
   <section class="rounded-3xl border border-amber-200 bg-amber-50 p-6">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <div class="text-xs font-semibold tracking-wide text-amber-700">VOTE REVIEW</div>
-        <h2 class="mt-1 text-2xl font-semibold text-slate-900">Pending External Vote Reviews</h2>
-        <p class="mt-1 text-sm text-amber-900">
-          These votes were submitted without an exact payment-note match and need review.
-        </p>
-      </div>
-      <div class="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 border border-amber-200">
-        {{ pending_vote_reviews|length }} pending
-      </div>
-    </div>
-
-    <div class="mt-5 overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead>
-          <tr class="text-left text-slate-600 border-b border-amber-200">
-            <th class="py-2 pr-4">Created</th>
-            <th class="py-2 pr-4">Show</th>
-            <th class="py-2 pr-4">Car</th>
-            <th class="py-2 pr-4">Category</th>
-            <th class="py-2 pr-4">Votes</th>
-            <th class="py-2 pr-4">Amount</th>
-            <th class="py-2 pr-4">Owner</th>
-            <th class="py-2 pr-4">Reference</th>
-            <th class="py-2 pr-4">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for vote in pending_vote_reviews %}
-          <tr class="border-b border-amber-100 align-top">
-            <td class="py-3 pr-4 whitespace-nowrap">{{ vote["created_at"] }}</td>
-            <td class="py-3 pr-4">
-              <div class="font-medium text-slate-900">{{ vote["show_title"] }}</div>
-              <div class="text-xs text-slate-500">{{ vote["show_slug"] }}</div>
-            </td>
-            <td class="py-3 pr-4">
-              <div class="font-medium text-slate-900">#{{ vote["car_number"] }}</div>
-              <div class="text-xs text-slate-500">{{ vote["year"] }} {{ vote["make"] }} {{ vote["model"] }}</div>
-            </td>
-            <td class="py-3 pr-4">{{ vote["category"] }}</td>
-            <td class="py-3 pr-4">{{ vote["vote_qty"] }}</td>
-            <td class="py-3 pr-4">${{ '%.2f'|format((vote["amount_cents"] or 0) / 100) }}</td>
-            <td class="py-3 pr-4">{{ vote["owner_name"] }}</td>
-            <td class="py-3 pr-4 text-xs text-slate-600 break-all">
-              {{ vote["stripe_payment_intent_id"] or "" }}
-            </td>
-            <td class="py-3 pr-4">
-              <div class="flex flex-wrap gap-2">
-                <form method="POST" action="{{ url_for('admin_approve_vote', vote_intent_id=vote['id']) }}">
-                  <button type="submit" class="rounded-2xl bg-green-600 px-4 py-2 text-white font-semibold hover:bg-green-700">
-                    Approve
-                  </button>
-                </form>
-
-                <form method="POST" action="{{ url_for('admin_reject_vote', vote_intent_id=vote['id']) }}">
-                  <button type="submit" class="rounded-2xl bg-white px-4 py-2 text-slate-700 font-semibold border border-slate-300 hover:bg-slate-50">
-                    Reject
-                  </button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-  {% else %}
-  <section class="rounded-3xl border border-slate-200 bg-white p-6">
-    <div class="text-xs font-semibold tracking-wide text-slate-500">VOTE REVIEW</div>
-    <h2 class="mt-1 text-2xl font-semibold text-slate-900">Pending External Vote Reviews</h2>
-    <p class="mt-1 text-sm text-slate-600">No votes are waiting for review right now.</p>
+    <h2 class="text-xl font-semibold text-slate-900">Pending External Vote Reviews</h2>
+    <p class="mt-1 text-sm text-amber-900">{{ pending_vote_reviews|length }} votes need review.</p>
+    <div class="mt-3"><a class="btn btn-outline" href="{{ url_for('admin_vote_reviews') if false else '#' }}">Review from the vote review panel</a></div>
   </section>
   {% endif %}
 
-  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-    <div class="flex items-center justify-between gap-4 mb-6">
-      <div>
-        <h2 class="text-xl font-semibold">Create New Show</h2>
-        <p class="text-sm text-slate-500">Add a new show to the system.</p>
-      </div>
-    </div>
+  {{ show_table('Active Shows', active_shows, 'No active show right now.') }}
+  {{ show_table('Upcoming Shows', upcoming_shows, 'No upcoming shows yet.') }}
+  {{ show_table('Draft Shows', draft_shows, 'No draft shows.') }}
+  {{ show_table('Archived Shows', archived_shows, 'No archived shows yet.', True) }}
 
-    <form
-      method="POST"
-      action="{{ url_for('admin_shows_create') }}"
-      enctype="multipart/form-data"
-      class="grid grid-cols-1 md:grid-cols-2 gap-6"
-    >
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
-        <input name="title" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
-        <input name="slug" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Type of Show</label>
-        <select name="show_type" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="full" selected>Full — classes, judging, trophies, registration fee</option>
-          <option value="popup">PopUp — fun event, optional trophies, registration fee</option>
-          <option value="cruise_in">Cruise In — come-and-go, usually no judging or voting</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Date</label>
-        <input name="date" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Cars Arrival Time</label>
-        <input name="cars_arrive_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Show Start Time</label>
-        <input name="show_start_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Show End Time</label>
-        <input name="show_end_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Location Name</label>
-        <input name="location_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Address</label>
-        <input name="address" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Benefiting</label>
-        <input name="benefiting" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Admission Fee</label>
-        <input name="suggested_donation" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Voting Mode</label>
-        <select name="voting_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="fundraiser_unlimited" selected>Fundraiser voting</option>
-          <option value="restricted_single">Restricted single vote</option>
-          <option value="none">None — voting disabled</option>
-        </select>
-        <div class="mt-1 text-xs text-slate-500">Use None for Cruise In or no-awards events.</div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Voting Payment Mode</label>
-        <select name="payment_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="stripe" selected>Platform (Stripe)</option>
-          <option value="external">External Charity Payment Link</option>
-          <option value="none">None — no vote payment</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Payment Label</label>
-        <input
-          name="charity_processor_label"
-          class="w-full rounded-2xl border border-slate-200 px-4 py-3"
-          placeholder="Example: Complete The Mission Payment">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Payment Link</label>
-        <input
-          type="url"
-          name="external_payment_url"
-          class="w-full rounded-2xl border border-slate-200 px-4 py-3"
-          placeholder="https://...">
-        <div class="mt-1 text-xs text-slate-500">
-          Used only when Voting Payment Mode is set to External Charity Payment Link.
-        </div>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Vote Payment Disclosure</label>
-        <textarea name="public_vote_disclosure" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: Vote payments are processed through the event payment system. A portion of each vote payment supports the named charity, and votes are counted after payment verification."></textarea>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
-        <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="draft">Draft</option>
-          <option value="upcoming">Upcoming</option>
-          <option value="active">Active</option>
-          <option value="past">Past</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Sort Order</label>
-        <input name="sort_order" value="100" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
-        <textarea name="description" rows="4" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Short Details</label>
-        <textarea name="short_details" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">QR Message</label>
-        <input name="qr_message" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">CTA Label</label>
-        <input name="cta_label" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">CTA URL</label>
-        <input name="cta_url" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <div class="text-xs font-semibold tracking-wide text-blue-700">WINDSHIELD CARD SETTINGS</div>
-        <p class="mt-1 text-sm text-blue-900">Customize the printed windscreen cards for this show. Auto uses voting cards for voting shows and information cards for cruise-ins or events with voting disabled.</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Layout Mode</label>
-            <select name="card_layout_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white">
-              <option value="auto" selected>Auto — use show settings</option>
-              <option value="voting">Voting card</option>
-              <option value="information">Information card</option>
-              <option value="sponsor">Sponsor / thank-you card</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Headline</label>
-            <input name="card_headline" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: WELCOME or SCAN TO VOTE">
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Subheadline</label>
-            <input name="card_subheadline" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: Journey Church Cruise-In">
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Organizer Name</label>
-        <input name="organizer_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Name</label>
-        <input name="venue_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 1</label>
-        <input name="venue_address_line1" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 2</label>
-        <input name="venue_address_line2" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue City</label>
-        <input name="venue_city" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue State</label>
-        <input name="venue_state" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue ZIP</label>
-        <input name="venue_zip" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Name</label>
-        <input name="charity_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Description</label>
-        <textarea name="charity_description" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></textarea>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="show_on_site" checked>
-          Show on site
-        </label>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="allow_sponsorships" checked>
-          Allow sponsorships
-        </label>
-        <div class="mt-1 text-xs text-slate-500">Turn off to hide sponsor links/forms for this show.</div>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="hide_address">
-          Hide address
-        </label>
-      </div>
-
-
-      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <h3 class="text-lg font-semibold text-slate-900">Registration Days / Sessions / Activities</h3>
-        <p class="mt-1 text-sm text-slate-600">Use this for multi-day or limited-capacity cruise-ins, drives, tech sessions, or activities. Leave blank for standard single-capacity shows.</p>
-        <div class="mt-4 rounded-2xl bg-white border border-blue-100 p-4">
-          <label class="block text-sm font-semibold text-slate-700 mb-1">Selection rule</label>
-          <select name="registration_slot_selection_mode" class="w-full rounded-xl border border-slate-200 px-3 py-2">
-            <option value="single" selected>One only — radio buttons</option>
-            <option value="multiple">Multiple allowed — checkboxes</option>
-          </select>
-          <div class="mt-1 text-xs text-slate-500">Default keeps the current one-day-only behavior.</div>
-        </div>
-        <div class="mt-4 grid gap-3">
-          {% for i in range(1, 6) %}
-          <div class="grid grid-cols-1 md:grid-cols-6 gap-3 rounded-2xl bg-white border border-blue-100 p-3">
-            <input type="hidden" name="slot_{{ i }}_id" value="">
-            <div class="md:col-span-2">
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Label</label>
-              <input name="slot_{{ i }}_label" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Saturday Cruise-In">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Date</label>
-              <input name="slot_{{ i }}_date" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Sat Jun 20">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Cars Arrive</label>
-              <input name="slot_{{ i }}_cars_arrive_time" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="3:30 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Public Start</label>
-              <input name="slot_{{ i }}_start_time" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="4 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">End</label>
-              <input name="slot_{{ i }}_end_time" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="8 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Cap</label>
-              <input name="slot_{{ i }}_capacity" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Optional cap">
-            </div>
-            <div class="md:col-span-6">
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Participant Instructions</label>
-              <textarea name="slot_{{ i }}_participant_instructions" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Example: Please arrive by 7:00 AM and plan to stay through 1:00 PM."></textarea>
-            </div>
-            <input type="hidden" name="slot_{{ i }}_sort_order" value="{{ i * 10 }}">
-            <label class="md:col-span-6 flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" name="slot_{{ i }}_is_active" checked> Active / visible to public registration</label>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Flyer Image</label>
-        <input type="hidden" name="flyer_image_path" value="">
-        <input type="file" name="flyer_image" accept=".jpg,.jpeg,.png,.webp">
-      </div>
-
-      <div class="md:col-span-2">
-        <button type="submit" class="btn btn-primary">Create Show</button>
-      </div>
+  <section id="create-show" class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <h2 class="text-xl font-semibold">Create New Show</h2>
+    <p class="mt-1 text-sm text-slate-500">Start with the basics. After creation, open Manage to add schedules, classes, imports, and card settings.</p>
+    <form method="POST" action="{{ url_for('admin_shows_create') }}" enctype="multipart/form-data" class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Title</label><input name="title" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Slug</label><input name="slug" class="w-full rounded-2xl border border-slate-200 px-4 py-3" required></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Type of Show</label><select name="show_type" class="w-full rounded-2xl border border-slate-200 px-4 py-3"><option value="full" selected>Full</option><option value="popup">PopUp</option><option value="cruise_in">Cruise In</option></select></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Status</label><select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3"><option value="draft" selected>Draft</option><option value="upcoming">Upcoming</option><option value="active">Active</option></select></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Main Date</label><input name="date" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Location Name</label><input name="location_name" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div class="md:col-span-2"><label class="block text-sm font-medium text-slate-700 mb-1">Address</label><input name="address" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Cars Arrival Time</label><input name="cars_arrive_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Show Start Time</label><input name="show_start_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Show End Time</label><input name="show_end_time" class="w-full rounded-2xl border border-slate-200 px-4 py-3"></div>
+      <div><label class="block text-sm font-medium text-slate-700 mb-1">Max Cars</label><input name="max_cars" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Optional"></div>
+      <div class="md:col-span-2"><button type="submit" class="btn btn-primary">Create Show</button></div>
     </form>
   </section>
-
-  {% for s in shows %}
-  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-      <div>
-        <h2 class="text-xl font-semibold">{{ s["title"] }}</h2>
-        <p class="text-sm text-slate-500">
-          Slug: {{ s["slug"] }} • Status: {{ s["status"] or "draft" }}
-          {% if s["is_active"] == 1 %}• Active{% endif %}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap gap-2">
-        <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}">
-          <button type="submit" class="btn btn-outline">Set Active</button>
-        </form>
-        <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s['id']) }}">
-          <button type="submit" class="btn btn-outline">Set Upcoming</button>
-        </form>
-        <form method="POST" action="{{ url_for('admin_shows_set_past', show_id=s['id']) }}">
-          <button type="submit" class="btn btn-outline">Set Past + Auto Save Export</button>
-        </form>
-        <a class="btn btn-outline" href="{{ url_for('admin_export_show_zip', show_id=s['id']) }}">Download Data ZIP</a>
-        <form method="POST" action="{{ url_for('admin_show_close_and_export', show_id=s['id']) }}">
-          <button type="submit" class="btn btn-primary">Close + Export</button>
-        </form>
-      </div>
-    </div>
-
-    <form
-      method="POST"
-      action="{{ url_for('admin_shows_update', show_id=s['id']) }}"
-      enctype="multipart/form-data"
-      class="grid grid-cols-1 md:grid-cols-2 gap-6"
-    >
-      <input type="hidden" name="show_id" value="{{ s['id'] }}">
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
-        <input name="title" value="{{ s['title'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
-        <input name="slug" value="{{ s['slug'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Type of Show</label>
-        <select name="show_type" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="full" {% if (s['show_type'] or 'full') == 'full' %}selected{% endif %}>Full — classes, judging, trophies, registration fee</option>
-          <option value="popup" {% if (s['show_type'] or '') == 'popup' %}selected{% endif %}>PopUp — fun event, optional trophies, registration fee</option>
-          <option value="cruise_in" {% if (s['show_type'] or '') == 'cruise_in' %}selected{% endif %}>Cruise In — come-and-go, usually no judging or voting</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Date</label>
-        <input name="date" value="{{ s['date'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Cars Arrival Time</label>
-        <input name="cars_arrive_time" value="{{ s['cars_arrive_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Show Start Time</label>
-        <input name="show_start_time" value="{{ s['show_start_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Show End Time</label>
-        <input name="show_end_time" value="{{ s['show_end_time'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Location Name</label>
-        <input name="location_name" value="{{ s['location_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Address</label>
-        <input name="address" value="{{ s['address'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Benefiting</label>
-        <input name="benefiting" value="{{ s['benefiting'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Admission Fee</label>
-        <input name="suggested_donation" value="{{ s['suggested_donation'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-        <div class="mt-1 text-xs text-slate-500">
-          This is the regular event admission fee. Voting payments are handled separately.
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Voting Mode</label>
-        <select name="voting_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="fundraiser_unlimited" {% if (s['voting_mode'] or 'fundraiser_unlimited') == 'fundraiser_unlimited' %}selected{% endif %}>Fundraiser voting</option>
-          <option value="restricted_single" {% if (s['voting_mode'] or '') == 'restricted_single' %}selected{% endif %}>Restricted single vote</option>
-          <option value="none" {% if (s['voting_mode'] or '') == 'none' %}selected{% endif %}>None — voting disabled</option>
-        </select>
-        <div class="mt-1 text-xs text-slate-500">Use None for Cruise In or no-awards events.</div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Voting Payment Mode</label>
-        <select name="payment_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="stripe" {% if (s['payment_mode'] or 'stripe') == 'stripe' %}selected{% endif %}>Platform (Stripe)</option>
-          <option value="external" {% if (s['payment_mode'] or '') == 'external' %}selected{% endif %}>External Charity Payment Link</option>
-          <option value="none" {% if (s['payment_mode'] or '') == 'none' %}selected{% endif %}>None — no vote payment</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Payment Label</label>
-        <input
-          name="charity_processor_label"
-          value="{{ s['charity_processor_label'] or '' }}"
-          class="w-full rounded-2xl border border-slate-200 px-4 py-3"
-          placeholder="Example: Complete The Mission Payment">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Payment Link</label>
-        <input
-          type="url"
-          name="external_payment_url"
-          value="{{ s['external_payment_url'] or '' }}"
-          class="w-full rounded-2xl border border-slate-200 px-4 py-3"
-          placeholder="https://...">
-        <div class="mt-1 text-xs text-slate-500">
-          Used only when Voting Payment Mode is set to External Charity Payment Link.
-        </div>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Vote Payment Disclosure</label>
-        <textarea name="public_vote_disclosure" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: Vote payments are processed through the event payment system. A portion of each vote payment supports the named charity, and votes are counted after payment verification.">{{ s['public_vote_disclosure'] or '' }}</textarea>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
-        <select name="status" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-          <option value="draft" {% if (s['status'] or '') == 'draft' %}selected{% endif %}>Draft</option>
-          <option value="upcoming" {% if (s['status'] or '') == 'upcoming' %}selected{% endif %}>Upcoming</option>
-          <option value="active" {% if (s['status'] or '') == 'active' %}selected{% endif %}>Active</option>
-          <option value="past" {% if (s['status'] or '') == 'past' %}selected{% endif %}>Past</option>
-        </select>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Sort Order</label>
-        <input name="sort_order" value="{{ s['sort_order'] or 100 }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
-        <textarea name="description" rows="4" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['description'] or '' }}</textarea>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Short Details</label>
-        <textarea name="short_details" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['short_details'] or '' }}</textarea>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">QR Message</label>
-        <input name="qr_message" value="{{ s['qr_message'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">CTA Label</label>
-        <input name="cta_label" value="{{ s['cta_label'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">CTA URL</label>
-        <input name="cta_url" value="{{ s['cta_url'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <div class="text-xs font-semibold tracking-wide text-blue-700">WINDSHIELD CARD SETTINGS</div>
-        <p class="mt-1 text-sm text-blue-900">Customize the printed windscreen cards for this show. Auto uses voting cards for voting shows and information cards for cruise-ins or events with voting disabled.</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Layout Mode</label>
-            {% set card_mode = s['card_layout_mode'] or 'auto' %}
-            <select name="card_layout_mode" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white">
-              <option value="auto" {% if card_mode == 'auto' %}selected{% endif %}>Auto — use show settings</option>
-              <option value="voting" {% if card_mode == 'voting' %}selected{% endif %}>Voting card</option>
-              <option value="information" {% if card_mode == 'information' %}selected{% endif %}>Information card</option>
-              <option value="sponsor" {% if card_mode == 'sponsor' %}selected{% endif %}>Sponsor / thank-you card</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Headline</label>
-            <input name="card_headline" value="{{ s['card_headline'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: WELCOME or SCAN TO VOTE">
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-sm font-medium text-slate-700 mb-1">Card Subheadline</label>
-            <input name="card_subheadline" value="{{ s['card_subheadline'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 bg-white" placeholder="Example: Journey Church Cruise-In">
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Organizer Name</label>
-        <input name="organizer_name" value="{{ s['organizer_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Name</label>
-        <input name="venue_name" value="{{ s['venue_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 1</label>
-        <input name="venue_address_line1" value="{{ s['venue_address_line1'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue Address Line 2</label>
-        <input name="venue_address_line2" value="{{ s['venue_address_line2'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue City</label>
-        <input name="venue_city" value="{{ s['venue_city'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue State</label>
-        <input name="venue_state" value="{{ s['venue_state'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Venue ZIP</label>
-        <input name="venue_zip" value="{{ s['venue_zip'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Name</label>
-        <input name="charity_name" value="{{ s['charity_name'] or '' }}" class="w-full rounded-2xl border border-slate-200 px-4 py-3">
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Charity Description</label>
-        <textarea name="charity_description" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3">{{ s['charity_description'] or '' }}</textarea>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="show_on_site" {% if s['show_on_site'] == 1 %}checked{% endif %}>
-          Show on site
-        </label>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="allow_sponsorships" {% if (s['allow_sponsorships'] if 'allow_sponsorships' in s.keys() else 1) == 1 %}checked{% endif %}>
-          Allow sponsorships
-        </label>
-        <div class="mt-1 text-xs text-slate-500">Turn off to hide sponsor links/forms for this show.</div>
-      </div>
-
-      <div>
-        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="hide_address" {% if s['hide_address'] == 1 %}checked{% endif %}>
-          Hide address
-        </label>
-      </div>
-
-
-      <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <h3 class="text-lg font-semibold text-slate-900">Registration Days / Sessions / Activities</h3>
-        <p class="mt-1 text-sm text-slate-600">Each active row becomes a selectable registration day/session/activity. Set any capacity that matches the client or parking lot size. Leave capacity blank/0 for no cap.</p>
-        {% set existing_slot_mode = (s['registration_slot_selection_mode'] if 'registration_slot_selection_mode' in s.keys() else 'single') %}
-        <div class="mt-4 rounded-2xl bg-white border border-blue-100 p-4">
-          <label class="block text-sm font-semibold text-slate-700 mb-1">Selection rule</label>
-          <select name="registration_slot_selection_mode" class="w-full rounded-xl border border-slate-200 px-3 py-2">
-            <option value="single" {% if existing_slot_mode != 'multiple' %}selected{% endif %}>One only — radio buttons</option>
-            <option value="multiple" {% if existing_slot_mode == 'multiple' %}selected{% endif %}>Multiple allowed — checkboxes</option>
-          </select>
-        </div>
-        {% set existing_slots = slots_by_show.get(s['id'], []) if slots_by_show else [] %}
-        <div class="mt-4 grid gap-3">
-          {% for i in range(1, 6) %}
-          {% set slot = existing_slots[i-1] if existing_slots|length >= i else None %}
-          <div class="grid grid-cols-1 md:grid-cols-7 gap-3 rounded-2xl bg-white border border-blue-100 p-3">
-            <input type="hidden" name="slot_{{ i }}_id" value="{{ slot['id'] if slot else '' }}">
-            <div class="md:col-span-2">
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Label</label>
-              <input name="slot_{{ i }}_label" value="{{ slot['slot_label'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Saturday Cruise-In">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Date</label>
-              <input name="slot_{{ i }}_date" value="{{ slot['slot_date'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Sat Jun 20">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Cars Arrive</label>
-              <input name="slot_{{ i }}_cars_arrive_time" value="{{ slot['cars_arrive_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="3:30 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Public Start</label>
-              <input name="slot_{{ i }}_start_time" value="{{ slot['start_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="4 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">End</label>
-              <input name="slot_{{ i }}_end_time" value="{{ slot['end_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="8 PM">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Cap</label>
-              <input name="slot_{{ i }}_capacity" value="{{ slot['capacity'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Optional cap">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Filled</label>
-              <div class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-sm">
-                {% if slot %}{{ slot['registered_count'] }} / {{ slot['capacity'] or '∞' }}{% else %}—{% endif %}
-              </div>
-            </div>
-            <div class="md:col-span-7">
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Participant Instructions</label>
-              <textarea name="slot_{{ i }}_participant_instructions" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Example: Please arrive by 7:00 AM and plan to stay through 1:00 PM.">{{ slot['participant_instructions'] if slot else '' }}</textarea>
-            </div>
-            <input type="hidden" name="slot_{{ i }}_sort_order" value="{{ slot['sort_order'] if slot else i * 10 }}">
-            <label class="md:col-span-7 flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" name="slot_{{ i }}_is_active" {% if not slot or slot['is_active'] == 1 %}checked{% endif %}> Active / visible to public registration</label>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-slate-700 mb-1">Flyer Image</label>
-
-        {% if s['flyer_image_path'] %}
-          <img src="{{ s['flyer_image_path'] }}" alt="{{ s['title'] }} flyer" class="mb-3 rounded-2xl border border-slate-200 max-h-56">
-        {% endif %}
-
-        <input type="hidden" name="flyer_image_path" value="{{ s['flyer_image_path'] or '' }}">
-        <input type="file" name="flyer_image" accept=".jpg,.jpeg,.png,.webp">
-      </div>
-
-      <div class="md:col-span-2">
-        <button type="submit" class="btn btn-primary">Save Show</button>
-      </div>
-    </form>
-  </section>
-  {% endfor %}
-
 </div>
 {% endblock %}

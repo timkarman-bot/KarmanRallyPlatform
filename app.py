@@ -120,6 +120,13 @@ from database import (
     show_has_registration_slots,
     show_slot_has_capacity,
     get_show_registration_slot_selection_mode,
+    list_judging_classes,
+    save_judging_classes_for_show,
+    find_matching_judging_class,
+    ensure_placeholder_cards_up_to_max,
+    import_judging_classes_for_show,
+    import_registered_cars_for_show,
+    archive_show,
 )
 
 
@@ -288,6 +295,37 @@ def _slot_payloads_from_request() -> list[dict[str, Any]]:
         })
     return payloads
 
+
+
+def _judging_class_payloads_from_request() -> list[dict[str, Any]]:
+    """Parse up to 50 judging classes from the admin show form."""
+    payloads: list[dict[str, Any]] = []
+    for idx in range(1, 51):
+        name = request.form.get(f"class_{idx}_name", "").strip()
+        code = request.form.get(f"class_{idx}_code", "").strip()
+        if not name and not code:
+            continue
+        payloads.append({
+            "class_name": name or code,
+            "class_code": code,
+            "description": request.form.get(f"class_{idx}_description", "").strip(),
+            "sort_order": request.form.get(f"class_{idx}_sort_order", str(idx * 10)).strip(),
+            "is_active": "1" if request.form.get(f"class_{idx}_is_active") == "on" else "0",
+            "year_min": request.form.get(f"class_{idx}_year_min", "").strip(),
+            "year_max": request.form.get(f"class_{idx}_year_max", "").strip(),
+            "make_contains": request.form.get(f"class_{idx}_make_contains", "").strip(),
+            "model_contains": request.form.get(f"class_{idx}_model_contains", "").strip(),
+            "keyword_contains": request.form.get(f"class_{idx}_keyword_contains", "").strip(),
+            "award_places": request.form.get(f"class_{idx}_award_places", "3").strip(),
+        })
+    return payloads
+
+
+def _auto_class_for_vehicle(show_id: int, year: str, make: str, model: str) -> tuple[Optional[int], int]:
+    try:
+        return find_matching_judging_class(int(show_id), year, make, model)
+    except Exception:
+        return None, 1
 
 def _registration_slots_for_public(show_id: int):
     return list_registration_slots(show_id, public_only=True)
@@ -840,12 +878,16 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
             ),
         )
 
+        class_id, class_needs_review = _auto_class_for_vehicle(show_id, ri["year"], ri["make"], ri["model"])
+
         cur.execute(
             """
             UPDATE show_cars
             SET year = ?,
                 make = ?,
                 model = ?,
+                judging_class_id = ?,
+                class_needs_review = ?,
                 insurance_carrier = ?,
                 registration_slot_id = ?,
                 registration_payment_status = 'paid',
@@ -865,6 +907,8 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 ri["year"],
                 ri["make"],
                 ri["model"],
+                class_id,
+                int(class_needs_review),
                 ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
                 registration_slot_id,
                 int(ri["amount_cents"] or 0),
@@ -943,15 +987,19 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
             (ri["owner_name"], ri["phone"], ri["email"], int(ri["opt_in_future"] or 0), int(ri["sponsor_opt_in"] or 0), CONSENT_TEXT_CAR_OWNER, CONSENT_VERSION, person_id),
         )
 
+        class_id, class_needs_review = _auto_class_for_vehicle(show_id, ri["year"], ri["make"], ri["model"])
+
         cur.execute(
             """
             UPDATE show_cars
             SET year = ?,
                 make = ?,
                 model = ?,
+                judging_class_id = ?,
+                class_needs_review = ?,
                 insurance_carrier = ?,
                 registration_slot_id = ?,
-                registration_payment_status = 'cash_pending',
+                registration_payment_status = 'paid_cash',
                 registration_amount_cents = ?,
                 registration_session_id = ?,
                 waiver_signed_name = ?,
@@ -964,13 +1012,15 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
                 waiver_received_at = datetime('now'),
                 waiver_received_by = 'electronic',
                 is_placeholder = 0,
-                registration_state = 'claimed / cash pending'
+                registration_state = 'claimed / paid cash'
             WHERE id = ?
             """,
             (
                 ri["year"],
                 ri["make"],
                 ri["model"],
+                class_id,
+                int(class_needs_review),
                 ri["insurance_carrier"] if "insurance_carrier" in ri.keys() else "",
                 registration_slot_id,
                 int(ri["amount_cents"] or 0),
@@ -995,7 +1045,7 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
             )
 
         cur.execute(
-            "UPDATE registration_intents SET payment_status = 'cash_pending', finalized_show_car_id = ? WHERE id = ?",
+            "UPDATE registration_intents SET payment_status = 'paid_cash', finalized_show_car_id = ? WHERE id = ?",
             (show_car_id, int(ri["id"])),
         )
         conn.commit()
@@ -1412,7 +1462,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
         attach_stripe_session_to_registration_intent(
             registration_intent_id,
             synthetic_session_id,
-            stripe_payment_intent_id="cash_pending",
+            stripe_payment_intent_id="paid_cash",
         )
         result = finalize_registration_intent_paid(synthetic_session_id)
         conn = _conn_direct()
@@ -1420,12 +1470,12 @@ def _register_submit_impl(show_slug: Optional[str] = None):
             conn.execute(
                 """
                 UPDATE show_cars
-                SET registration_payment_status = 'cash_pending', registration_state = 'claimed / cash pending'
+                SET registration_payment_status = 'paid_cash', registration_state = 'claimed / paid cash'
                 WHERE id = ?
                 """,
                 (int(result["show_car_id"]),),
             )
-            conn.execute("UPDATE registration_intents SET payment_status = 'cash_pending' WHERE id = ?", (registration_intent_id,))
+            conn.execute("UPDATE registration_intents SET payment_status = 'paid_cash' WHERE id = ?", (registration_intent_id,))
             conn.commit()
         finally:
             conn.close()
@@ -1622,9 +1672,9 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     insurance_carrier = request.form.get("insurance_carrier", "").strip()
     waiver_accepted = request.form.get("waiver_accepted", "") == "on"
     waiver_signed_name = request.form.get("waiver_signed_name", "").strip()
-    registration_payment_method = request.form.get("registration_payment_method", "card").strip().lower()
-    if registration_payment_method not in {"card", "cash"}:
-        registration_payment_method = "card"
+    # Placeholder cards are handed out after payment is collected at the booth.
+    # Do not send day-of claimants to online checkout.
+    registration_payment_method = "cash"
 
     if not (owner_name and year and make and model and waiver_signed_name):
         return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Please fill out all required fields.")
@@ -2921,20 +2971,109 @@ def admin_show_settings():
 @require_admin
 def admin_shows():
     shows = list_shows_admin()
-    slots_by_show = {int(s["id"]): list_registration_slots(int(s["id"]), public_only=False) for s in shows}
+
+    def _status(row):
+        return str(row["status"] or "draft").strip().lower()
+
+    active_shows = [s for s in shows if int(s["is_active"] or 0) == 1 and _status(s) not in {"archived", "past"}]
+    upcoming_shows = [s for s in shows if _status(s) == "upcoming" and int(s["is_active"] or 0) != 1]
+    draft_shows = [s for s in shows if _status(s) in {"", "draft"}]
+    archived_shows = [s for s in shows if _status(s) in {"archived", "past"}]
+
     return render_template(
         "admin_shows.html",
         shows=shows,
+        active_shows=active_shows,
+        upcoming_shows=upcoming_shows,
+        draft_shows=draft_shows,
+        archived_shows=archived_shows,
         show=get_active_show(),
-        waiver_templates=list_waiver_templates(),
         saved_exports=_list_saved_exports(),
-        slots_by_show=slots_by_show,
+        pending_vote_reviews=list_pending_vote_reviews(),
     )
+
+
+@app.get("/admin/shows/<int:show_id>")
+@require_admin
+def admin_show_detail(show_id: int):
+    show_detail = get_show_by_id(show_id)
+    if not show_detail:
+        abort(404)
+    slots_by_show = {int(show_id): list_registration_slots(int(show_id), public_only=False)}
+    classes_by_show = {int(show_id): list_judging_classes(int(show_id), active_only=False)}
+    return render_template(
+        "admin_show_detail.html",
+        show_detail=show_detail,
+        show=show_detail,
+        waiver_templates=list_waiver_templates(),
+        slots_by_show=slots_by_show,
+        classes_by_show=classes_by_show,
+    )
+
+
+def _read_uploaded_csv_rows(file_storage) -> list[dict[str, Any]]:
+    if not file_storage or not file_storage.filename:
+        raise ValueError("Please choose a CSV file to import.")
+    raw = file_storage.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("The CSV file does not have a header row.")
+    rows = []
+    for row in reader:
+        clean = {str(k or "").strip(): (v or "").strip() for k, v in row.items()}
+        if any(clean.values()):
+            rows.append(clean)
+    if not rows:
+        raise ValueError("The CSV file did not contain any importable rows.")
+    return rows
+
+
+@app.get("/admin/shows/<int:show_id>/import")
+@require_admin
+def admin_show_import(show_id: int):
+    show_detail = get_show_by_id(show_id)
+    if not show_detail:
+        abort(404)
+    return render_template("admin_show_import.html", show_detail=show_detail, show=show_detail)
+
+
+@app.post("/admin/shows/<int:show_id>/import")
+@require_admin
+def admin_show_import_post(show_id: int):
+    show_detail = get_show_by_id(show_id)
+    if not show_detail:
+        abort(404)
+    import_type = (request.form.get("import_type") or "").strip().lower()
+    try:
+        rows = _read_uploaded_csv_rows(request.files.get("import_file"))
+        if import_type == "classes":
+            result = import_judging_classes_for_show(show_id, rows)
+            flash(f"Imported {result.get('created', 0)} judging classes.", "ok")
+        elif import_type == "registrations":
+            result = import_registered_cars_for_show(
+                show_id,
+                rows,
+                assume_paid=request.form.get("assume_paid") == "on",
+            )
+            flash(
+                f"Imported {result.get('created', 0)} registrations. "
+                f"Skipped {result.get('skipped', 0)} rows.",
+                "ok" if not result.get("skipped") else "error",
+            )
+        else:
+            raise ValueError("Unknown import type.")
+    except Exception as e:
+        flash(f"Import failed: {e}", "error")
+    return redirect(url_for("admin_show_import", show_id=show_id))
 
 
 @app.post("/admin/shows/create")
 @require_admin
 def admin_shows_create():
+    max_cars_raw = request.form.get("max_cars", "").strip()
+    max_cars = int(max_cars_raw) if max_cars_raw.isdigit() and int(max_cars_raw) > 0 else None
+
     slug = request.form.get("slug", "").strip()
     title = request.form.get("title", "").strip()
 
@@ -2969,6 +3108,9 @@ def admin_shows_create():
     except ValueError:
         max_votes_per_checkout = 50
 
+    max_cars_raw = request.form.get("max_cars", "").strip()
+    max_cars = int(max_cars_raw) if max_cars_raw.isdigit() and int(max_cars_raw) > 0 else None
+
     flyer_image_path = request.form.get("flyer_image_path", "").strip()
     flyer_file = request.files.get("flyer_image")
     if flyer_file and flyer_file.filename:
@@ -2983,6 +3125,7 @@ def admin_shows_create():
         flyer_image_path=flyer_image_path,
         title=title,
         show_type=show_type,
+        max_cars=max_cars,
         date=request.form.get("date", "").strip(),
         time="",
         cars_arrive_time=request.form.get("cars_arrive_time", "").strip(),
@@ -3027,6 +3170,7 @@ def admin_shows_create():
         card_layout_mode=request.form.get("card_layout_mode", "auto").strip(),
     )
     save_registration_slots_for_show(new_show_id, _slot_payloads_from_request())
+    save_judging_classes_for_show(new_show_id, _judging_class_payloads_from_request())
 
     flash("Show created.", "ok")
     return redirect(url_for("admin_shows"))
@@ -3077,6 +3221,7 @@ def admin_shows_update(show_id: int):
         slug=slug,
         title=request.form.get("title", "").strip(),
         show_type=show_type,
+        max_cars=max_cars,
         flyer_image_path=flyer_image_path,
         date=request.form.get("date", "").strip(),
         time="",
@@ -3122,9 +3267,10 @@ def admin_shows_update(show_id: int):
         card_layout_mode=request.form.get("card_layout_mode", "auto").strip(),
     )
     save_registration_slots_for_show(show_id, _slot_payloads_from_request())
+    save_judging_classes_for_show(show_id, _judging_class_payloads_from_request())
 
     flash("Show updated.", "ok")
-    return redirect(url_for("admin_shows"))
+    return redirect(url_for("admin_show_detail", show_id=show_id))
 
 
 @app.post("/admin/shows/<int:show_id>/set-active")
@@ -3156,6 +3302,20 @@ def admin_shows_set_past(show_id: int):
     except Exception as e:
         _log_event("admin.show_set_past_export_failed", show_id, {"error": str(e)}, actor_type="admin")
         flash(f"Show moved to past, but automatic export failed: {e}", "error")
+    return redirect(url_for("admin_shows"))
+
+
+@app.post("/admin/shows/<int:show_id>/archive")
+@require_admin
+def admin_shows_archive(show_id: int):
+    archive_show(show_id)
+    try:
+        _, filename, save_path = _save_snapshot_zip_for_show(show_id)
+        _log_event("admin.show_archived", show_id, {"auto_export_filename": filename, "saved_path": save_path}, actor_type="admin")
+        flash(f"Show archived and export saved: {filename}", "ok")
+    except Exception as e:
+        _log_event("admin.show_archive_export_failed", show_id, {"error": str(e)}, actor_type="admin")
+        flash(f"Show archived, but automatic export failed: {e}", "error")
     return redirect(url_for("admin_shows"))
 
 
@@ -3319,6 +3479,7 @@ def admin_print_cards_pdf():
         static_root=os.path.join(app.root_path, "static"),
         title_sponsor=title_sponsor,
         sponsors=sponsors,
+        judging_classes=[dict(c) for c in list_judging_classes(int(show["id"]), active_only=True)],
         include_back=include_back,
         mirror_back_pages=False,
     )
@@ -3746,6 +3907,22 @@ def admin_placeholders_create():
         actor_type="admin",
     )
     flash(f"Created {created} placeholder cars.", "ok")
+    return redirect(url_for("admin_placeholders"))
+
+
+
+@app.post("/admin/placeholders/fill-to-max")
+@require_admin
+def admin_placeholders_fill_to_max():
+    show = get_active_show()
+    if not show:
+        return "No active show.", 500
+    try:
+        created = ensure_placeholder_cards_up_to_max(int(show["id"]))
+        _log_event("admin.placeholders_filled_to_max", int(show["id"]), {"created": created}, actor_type="admin")
+        flash(f"Created {created} open placeholder cards up to this show's Max Cars limit.", "ok")
+    except ValueError as e:
+        flash(str(e), "error")
     return redirect(url_for("admin_placeholders"))
 
 

@@ -235,6 +235,8 @@ def init_db() -> None:
         "ALTER TABLE show_cars ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE show_cars ADD COLUMN registration_state TEXT NOT NULL DEFAULT 'paid'",
         "ALTER TABLE show_cars ADD COLUMN checked_in_at TEXT",
+        "ALTER TABLE show_cars ADD COLUMN judging_class_id INTEGER",
+        "ALTER TABLE show_cars ADD COLUMN class_needs_review INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             cur.execute(sql)
@@ -339,6 +341,35 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_show ON show_car_registration_slots(show_id)",
         "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_car ON show_car_registration_slots(show_car_id)",
         "CREATE INDEX IF NOT EXISTS idx_show_car_registration_slots_slot ON show_car_registration_slots(registration_slot_id)",
+    ]:
+        cur.execute(sql)
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS show_judging_classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            class_code TEXT,
+            class_name TEXT NOT NULL,
+            description TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            year_min INTEGER,
+            year_max INTEGER,
+            make_contains TEXT,
+            model_contains TEXT,
+            keyword_contains TEXT,
+            award_places INTEGER NOT NULL DEFAULT 3,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_show_judging_classes_show_id ON show_judging_classes(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_show_cars_judging_class ON show_cars(show_id, judging_class_id)",
     ]:
         cur.execute(sql)
 
@@ -807,6 +838,7 @@ def create_show_admin(
     flyer_image_path: str,
     title: str,
     show_type: str = "full",
+    max_cars: Optional[int] = None,
     date: str,
     time: str,
     cars_arrive_time: str = "",
@@ -873,7 +905,7 @@ def create_show_admin(
     cur.execute(
         """
         INSERT INTO shows (
-            slug, flyer_image_path, title, show_type, date, time, cars_arrive_time, day_of_registration_time,
+            slug, flyer_image_path, title, show_type, max_cars, date, time, cars_arrive_time, day_of_registration_time,
             show_start_time, show_end_time, location_name, address, benefiting,
             suggested_donation, description, status, short_details, public_vote_disclosure, qr_message,
             cta_label, cta_url, show_on_site, sort_order, hide_address, voting_open, is_active,
@@ -882,13 +914,14 @@ def create_show_admin(
             voting_mode, payment_mode, charity_processor_label, external_payment_url, allow_custom_votes, preset_vote_options, max_votes_per_checkout, allow_sponsorships, registration_slot_selection_mode,
             card_headline, card_subheadline, card_layout_mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slug.strip(),
             (flyer_image_path or "").strip(),
             title.strip(),
             show_type_clean,
+            int(max_cars) if max_cars else None,
             (date or "").strip(),
             (time or "").strip(),
             (cars_arrive_time or "").strip(),
@@ -947,6 +980,7 @@ def update_show_admin_record(
     slug: str,
     title: str,
     show_type: str = "full",
+    max_cars: Optional[int] = None,
     flyer_image_path: str,
     date: str,
     time: str,
@@ -999,7 +1033,7 @@ def update_show_admin_record(
     conn.execute(
         """
         UPDATE shows
-        SET slug = ?, title = ?, show_type = ?, flyer_image_path = ?, date = ?, time = ?,
+        SET slug = ?, title = ?, show_type = ?, max_cars = ?, flyer_image_path = ?, date = ?, time = ?,
             cars_arrive_time = ?, day_of_registration_time = ?, show_start_time = ?, show_end_time = ?,
             location_name = ?, address = ?, benefiting = ?, suggested_donation = ?, description = ?, status = ?,
             short_details = ?, public_vote_disclosure = ?, qr_message = ?, cta_label = ?, cta_url = ?,
@@ -1015,6 +1049,7 @@ def update_show_admin_record(
             slug.strip(),
             title.strip(),
             (show_type or "full").strip().lower().replace("-", "_"),
+            int(max_cars) if max_cars else None,
             (flyer_image_path or "").strip(),
             (date or "").strip(),
             (time or "").strip(),
@@ -1820,6 +1855,10 @@ def search_show_cars_admin(show_id: int, query: str) -> List[sqlite3.Row]:
             sc.registration_state,
             sc.checked_in_at,
             sc.registration_slot_id,
+            sc.judging_class_id,
+            sc.class_needs_review,
+            jc.class_name AS judging_class_name,
+            jc.class_code AS judging_class_code,
             slot.slot_label,
             slot.slot_date,
             slot.cars_arrive_time as slot_cars_arrive_time,
@@ -1934,6 +1973,7 @@ def get_show_car_admin_by_id(show_id: int, show_car_id: int) -> Optional[sqlite3
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
+        LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
         WHERE sc.show_id = ? AND sc.id = ?
         LIMIT 1
         """,
@@ -2117,6 +2157,10 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
             sc.registration_state,
             sc.checked_in_at,
             sc.registration_slot_id,
+            sc.judging_class_id,
+            sc.class_needs_review,
+            jc.class_name AS judging_class_name,
+            jc.class_code AS judging_class_code,
             slot.slot_label,
             slot.slot_date,
             slot.cars_arrive_time as slot_cars_arrive_time,
@@ -2137,6 +2181,7 @@ def list_show_cars_public(show_id: int) -> List[sqlite3.Row]:
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
+        LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
         WHERE sc.show_id = ?
           AND COALESCE(sc.registration_state, '') != 'removed'
           AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
@@ -2524,6 +2569,192 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
     finally:
         conn.close()
 
+
+# JUDGING CLASSES / AUTO CLASS ASSIGNMENT
+
+def list_judging_classes(show_id: int, active_only: bool = False) -> List[sqlite3.Row]:
+    conn = _conn()
+    where = "WHERE show_id = ?"
+    params: list[Any] = [int(show_id)]
+    if active_only:
+        where += " AND is_active = 1"
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM show_judging_classes
+        {where}
+        ORDER BY sort_order ASC, id ASC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
+def save_judging_classes_for_show(show_id: int, payloads: List[Dict[str, Any]]) -> None:
+    """Replace a show's judging/class list from the admin form.
+
+    This is intentionally replace-all to keep the interface simple and predictable.
+    Existing car assignments keep their class ids until the next claim/update, but inactive/deleted
+    classes will no longer be offered for new assignments.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute("DELETE FROM show_judging_classes WHERE show_id = ?", (int(show_id),))
+        for idx, item in enumerate(payloads, start=1):
+            class_name = (item.get("class_name") or item.get("name") or "").strip()
+            if not class_name:
+                continue
+            sort_order = _int_or_none(item.get("sort_order")) or idx * 10
+            award_places = _int_or_none(item.get("award_places")) or 3
+            cur.execute(
+                """
+                INSERT INTO show_judging_classes (
+                    show_id, class_code, class_name, description, sort_order, is_active,
+                    year_min, year_max, make_contains, model_contains, keyword_contains, award_places, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (
+                    int(show_id),
+                    (item.get("class_code") or item.get("code") or "").strip(),
+                    class_name,
+                    (item.get("description") or "").strip(),
+                    int(sort_order),
+                    1 if str(item.get("is_active", "1")).lower() in {"1", "true", "yes", "on", "active"} else 0,
+                    _int_or_none(item.get("year_min")),
+                    _int_or_none(item.get("year_max")),
+                    (item.get("make_contains") or "").strip(),
+                    (item.get("model_contains") or "").strip(),
+                    (item.get("keyword_contains") or "").strip(),
+                    max(1, int(award_places)),
+                ),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _contains_any_term(haystack: str, terms_csv: str) -> bool:
+    terms = [t.strip().lower() for t in str(terms_csv or "").replace(";", ",").split(",") if t.strip()]
+    if not terms:
+        return True
+    h = (haystack or "").lower()
+    return any(t in h for t in terms)
+
+
+def find_matching_judging_class(show_id: int, year: str, make: str, model: str) -> Tuple[Optional[int], int]:
+    """Return (class_id, needs_review).
+
+    Rules are intentionally conservative:
+    - A class matches if every populated rule field matches.
+    - If exactly one active class matches, assign it.
+    - If none or multiple match, leave class blank and flag for review.
+    """
+    try:
+        y = int(str(year or "").strip())
+    except Exception:
+        y = None
+    make_text = str(make or "").strip().lower()
+    model_text = str(model or "").strip().lower()
+    vehicle_text = " ".join([str(year or ""), make_text, model_text]).strip().lower()
+
+    matches: list[int] = []
+    for cls in list_judging_classes(show_id, active_only=True):
+        has_rule = any([
+            cls["year_min"] is not None,
+            cls["year_max"] is not None,
+            (cls["make_contains"] or "").strip(),
+            (cls["model_contains"] or "").strip(),
+            (cls["keyword_contains"] or "").strip(),
+        ])
+        if not has_rule:
+            continue
+        if cls["year_min"] is not None and (y is None or y < int(cls["year_min"])):
+            continue
+        if cls["year_max"] is not None and (y is None or y > int(cls["year_max"])):
+            continue
+        if not _contains_any_term(make_text, cls["make_contains"] or ""):
+            continue
+        if not _contains_any_term(model_text, cls["model_contains"] or ""):
+            continue
+        if not _contains_any_term(vehicle_text, cls["keyword_contains"] or ""):
+            continue
+        matches.append(int(cls["id"]))
+
+    if len(matches) == 1:
+        return matches[0], 0
+    if len(matches) > 1:
+        return None, 1
+    active_classes = list_judging_classes(show_id, active_only=True)
+    return None, 1 if active_classes else 0
+
+
+def ensure_placeholder_cards_up_to_max(show_id: int) -> int:
+    """Create available placeholder cards for all missing numbers up to shows.max_cars.
+
+    This supports the show-day workflow where pre-registered cars get assigned numbers,
+    and all remaining printed cards can be shuffled and handed out from multiple lines.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        show = cur.execute("SELECT max_cars FROM shows WHERE id = ? LIMIT 1", (int(show_id),)).fetchone()
+        try:
+            max_cars = int(show["max_cars"] or 0) if show else 0
+        except Exception:
+            max_cars = 0
+        if max_cars <= 0:
+            raise ValueError("Set Max Cars for this show before creating the open placeholder stack.")
+
+        existing = {
+            int(r["car_number"])
+            for r in cur.execute("SELECT car_number FROM show_cars WHERE show_id = ?", (int(show_id),)).fetchall()
+        }
+        created = 0
+        for n in range(1, max_cars + 1):
+            if n in existing:
+                continue
+            cur.execute(
+                """
+                INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
+                VALUES (?, ?, ?, 0, 0, NULL, NULL)
+                """,
+                ("", "", ""),
+            )
+            person_id = int(cur.lastrowid)
+            cur.execute(
+                """
+                INSERT INTO show_cars (
+                    show_id, person_id, car_number, car_token, year, make, model,
+                    is_placeholder, registration_state, registration_payment_status
+                ) VALUES (?, ?, ?, ?, 'TBD', 'TBD', 'TBD', 1, 'placeholder', 'open')
+                """,
+                (int(show_id), person_id, n, _new_car_token()),
+            )
+            created += 1
+        conn.commit()
+        return created
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 # PLACEHOLDER CARS
 
 def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
@@ -2579,7 +2810,7 @@ def create_placeholder_cars(show_id: int, start_number: int, count: int) -> int:
                 show_id, person_id, car_number, car_token, year, make, model,
                 is_placeholder, registration_state, registration_payment_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'placeholder', 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'placeholder', 'open')
             """,
             (show_id, person_id, n, token, "TBD", "TBD", "TBD"),
         )
@@ -3437,6 +3668,7 @@ def export_show_cars_rows(show_id: int) -> List[sqlite3.Row]:
         FROM show_cars sc
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
+        LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
         WHERE sc.show_id = ?
         ORDER BY sc.car_number ASC
         """,
@@ -3550,3 +3782,293 @@ def build_snapshot_zip_bytes(show_id: int) -> Tuple[bytes, str]:
 
     mem.seek(0)
     return mem.getvalue(), filename
+# ADMIN IMPORT / ARCHIVE HELPERS
+
+def _csv_key_map(row: Dict[str, Any]) -> Dict[str, str]:
+    def norm(k: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(k or "").strip().lower())
+    return {norm(k): k for k in row.keys()}
+
+
+def _csv_value(row: Dict[str, Any], *names: str) -> str:
+    key_map = _csv_key_map(row)
+    for name in names:
+        n = re.sub(r"[^a-z0-9]+", "", str(name or "").strip().lower())
+        if n in key_map:
+            return str(row.get(key_map[n]) or "").strip()
+    return ""
+
+
+def _csv_int(value: str, default: Optional[int] = None) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(float(raw))
+    except Exception:
+        return default
+
+
+def _csv_bool(value: str, default: int = 1) -> int:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return int(default)
+    return 1 if raw in {"1", "true", "yes", "y", "active", "on", "checked"} else 0
+
+
+def archive_show(show_id: int) -> None:
+    """Archive a show without deleting historical data."""
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE shows
+        SET status = 'archived', is_active = 0, voting_open = 0
+        WHERE id = ?
+        """,
+        (int(show_id),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def import_judging_classes_for_show(show_id: int, rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Append/update judging classes from CSV rows.
+
+    Accepted columns include: class_code, class_name, description, year_min, year_max,
+    make_contains, model_contains, keyword_contains, award_places, sort_order, is_active.
+    Existing rows with the same class_code or class_name are updated.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    created = 0
+    updated = 0
+    skipped = 0
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        for i, row in enumerate(rows, start=1):
+            class_code = _csv_value(row, "class_code", "code", "class", "class number")
+            class_name = _csv_value(row, "class_name", "name", "class name", "judging class")
+            if not class_name and class_code:
+                class_name = class_code
+            if not class_name:
+                skipped += 1
+                continue
+            description = _csv_value(row, "description", "desc")
+            year_min = _csv_int(_csv_value(row, "year_min", "year min", "min year"))
+            year_max = _csv_int(_csv_value(row, "year_max", "year max", "max year"))
+            make_contains = _csv_value(row, "make_contains", "make contains", "make")
+            model_contains = _csv_value(row, "model_contains", "model contains", "model")
+            keyword_contains = _csv_value(row, "keyword_contains", "keyword", "keywords")
+            award_places = _csv_int(_csv_value(row, "award_places", "awards", "places"), 3) or 3
+            sort_order = _csv_int(_csv_value(row, "sort_order", "sort", "order"), i * 10) or (i * 10)
+            is_active = _csv_bool(_csv_value(row, "is_active", "active"), 1)
+
+            existing = None
+            if class_code:
+                existing = cur.execute(
+                    "SELECT id FROM show_judging_classes WHERE show_id = ? AND lower(class_code) = lower(?) LIMIT 1",
+                    (int(show_id), class_code),
+                ).fetchone()
+            if not existing:
+                existing = cur.execute(
+                    "SELECT id FROM show_judging_classes WHERE show_id = ? AND lower(class_name) = lower(?) LIMIT 1",
+                    (int(show_id), class_name),
+                ).fetchone()
+
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE show_judging_classes
+                    SET class_code = ?, class_name = ?, description = ?, sort_order = ?, is_active = ?,
+                        year_min = ?, year_max = ?, make_contains = ?, model_contains = ?, keyword_contains = ?,
+                        award_places = ?, updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (class_code, class_name, description, int(sort_order), int(is_active), year_min, year_max,
+                     make_contains, model_contains, keyword_contains, int(award_places), int(existing["id"])),
+                )
+                updated += 1
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO show_judging_classes (
+                        show_id, class_code, class_name, description, sort_order, is_active,
+                        year_min, year_max, make_contains, model_contains, keyword_contains, award_places
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (int(show_id), class_code, class_name, description, int(sort_order), int(is_active),
+                     year_min, year_max, make_contains, model_contains, keyword_contains, int(award_places)),
+                )
+                created += 1
+        conn.commit()
+        return {"created": created, "updated": updated, "skipped": skipped}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _find_class_id_by_code_or_name(cur: sqlite3.Cursor, show_id: int, value: str) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    row = cur.execute(
+        """
+        SELECT id FROM show_judging_classes
+        WHERE show_id = ? AND (lower(class_code) = lower(?) OR lower(class_name) = lower(?))
+        LIMIT 1
+        """,
+        (int(show_id), raw, raw),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def import_registered_cars_for_show(show_id: int, rows: List[Dict[str, Any]], *, assume_paid: bool = True) -> Dict[str, int]:
+    """Import already accepted outside registrations.
+
+    Accepted columns include: car_number, owner_name/name, phone, email, year, make, model,
+    class_code/class_name/judging_class, payment_status, waiver_received.
+    If car_number is blank, the next open placeholder card is claimed; if none exists, the next
+    available number is used.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    created = 0
+    updated_placeholders = 0
+    skipped = 0
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            owner_name = _csv_value(row, "owner_name", "owner", "name", "full name", "participant name")
+            phone = _csv_value(row, "phone", "mobile", "cell")
+            email = _csv_value(row, "email", "email address")
+            year = _csv_value(row, "year", "vehicle year", "car year") or "TBD"
+            make = _csv_value(row, "make", "vehicle make", "car make") or "TBD"
+            model = _csv_value(row, "model", "vehicle model", "car model") or "TBD"
+            if not owner_name and make == "TBD" and model == "TBD":
+                skipped += 1
+                continue
+            if not owner_name:
+                owner_name = "Imported Owner"
+            car_number = _csv_int(_csv_value(row, "car_number", "car #", "number", "entry number"))
+
+            if car_number is None:
+                ph = cur.execute(
+                    """
+                    SELECT car_number FROM show_cars
+                    WHERE show_id = ? AND COALESCE(is_placeholder, 0) = 1 AND COALESCE(registration_state, '') = 'placeholder'
+                    ORDER BY car_number ASC LIMIT 1
+                    """,
+                    (int(show_id),),
+                ).fetchone()
+                car_number = int(ph["car_number"]) if ph else get_next_available_car_number(int(show_id))
+
+            existing_registered = cur.execute(
+                """
+                SELECT id FROM show_cars
+                WHERE show_id = ? AND car_number = ? AND COALESCE(is_placeholder, 0) = 0
+                LIMIT 1
+                """,
+                (int(show_id), int(car_number)),
+            ).fetchone()
+            if existing_registered:
+                skipped += 1
+                continue
+
+            class_value = _csv_value(row, "class_code", "class_name", "judging_class", "class", "car class")
+            judging_class_id = _find_class_id_by_code_or_name(cur, int(show_id), class_value)
+            class_needs_review = 0
+            if not judging_class_id:
+                # Same logic as automatic day-of class assignment, but done inline to avoid nested write locks.
+                matches = []
+                try:
+                    y = int(float(str(year).strip()))
+                except Exception:
+                    y = None
+                hay_make = str(make or "").lower()
+                hay_model = str(model or "").lower()
+                hay_all = f"{hay_make} {hay_model}".strip()
+                for cls in cur.execute("SELECT * FROM show_judging_classes WHERE show_id = ? AND is_active = 1", (int(show_id),)).fetchall():
+                    ok = True
+                    if cls["year_min"] is not None and (y is None or y < int(cls["year_min"])):
+                        ok = False
+                    if cls["year_max"] is not None and (y is None or y > int(cls["year_max"])):
+                        ok = False
+                    mk = (cls["make_contains"] or "").strip().lower()
+                    if mk:
+                        terms = [t.strip() for t in re.split(r"[,;|]", mk) if t.strip()]
+                        if terms and not any(t in hay_make for t in terms):
+                            ok = False
+                    md = (cls["model_contains"] or "").strip().lower()
+                    if md:
+                        terms = [t.strip() for t in re.split(r"[,;|]", md) if t.strip()]
+                        if terms and not any(t in hay_model for t in terms):
+                            ok = False
+                    kw = (cls["keyword_contains"] or "").strip().lower()
+                    if kw:
+                        terms = [t.strip() for t in re.split(r"[,;|]", kw) if t.strip()]
+                        if terms and not any(t in hay_all for t in terms):
+                            ok = False
+                    if ok:
+                        matches.append(int(cls["id"]))
+                if len(matches) == 1:
+                    judging_class_id = matches[0]
+                elif len(matches) != 1:
+                    class_needs_review = 1
+
+            cur.execute(
+                """
+                INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
+                VALUES (?, ?, ?, 0, 0, ?, ?)
+                """,
+                (owner_name, phone, email, "Imported outside registration", "imported-outside-system"),
+            )
+            person_id = int(cur.lastrowid)
+            waiver_received = _csv_bool(_csv_value(row, "waiver_received", "waiver", "signed waiver"), 0)
+            payment_status = _csv_value(row, "payment_status", "paid status", "status") or ("paid_imported" if assume_paid else "imported")
+
+            placeholder = cur.execute(
+                """
+                SELECT id, car_token FROM show_cars
+                WHERE show_id = ? AND car_number = ? AND COALESCE(is_placeholder, 0) = 1 AND COALESCE(registration_state, '') = 'placeholder'
+                LIMIT 1
+                """,
+                (int(show_id), int(car_number)),
+            ).fetchone()
+            if placeholder:
+                cur.execute(
+                    """
+                    UPDATE show_cars
+                    SET person_id = ?, year = ?, make = ?, model = ?, registration_payment_status = ?,
+                        registration_state = 'claimed', is_placeholder = 0, waiver_received = ?,
+                        waiver_received_at = CASE WHEN ? = 1 THEN COALESCE(waiver_received_at, datetime('now')) ELSE waiver_received_at END,
+                        waiver_received_by = CASE WHEN ? = 1 THEN 'import' ELSE waiver_received_by END,
+                        judging_class_id = ?, class_needs_review = ?
+                    WHERE id = ?
+                    """,
+                    (person_id, year, make, model, payment_status, waiver_received, waiver_received, waiver_received,
+                     judging_class_id, int(class_needs_review), int(placeholder["id"])),
+                )
+                updated_placeholders += 1
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO show_cars (
+                        show_id, person_id, car_number, car_token, year, make, model,
+                        registration_payment_status, is_placeholder, registration_state,
+                        waiver_received, waiver_received_at, waiver_received_by,
+                        judging_class_id, class_needs_review
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'claimed', ?, CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END, CASE WHEN ? = 1 THEN 'import' ELSE NULL END, ?, ?)
+                    """,
+                    (int(show_id), person_id, int(car_number), _new_car_token(), year, make, model, payment_status,
+                     waiver_received, waiver_received, waiver_received, judging_class_id, int(class_needs_review)),
+                )
+            created += 1
+        conn.commit()
+        return {"created": created, "updated_placeholders": updated_placeholders, "skipped": skipped}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

@@ -95,6 +95,7 @@ def build_landscape_cards_pdf(
     static_root: str,
     title_sponsor: Optional[dict],
     sponsors: List[dict],
+    judging_classes: Optional[List[dict]] = None,
     include_back: bool = False,
     mirror_back_pages: bool = False,
 ) -> bytes:
@@ -272,6 +273,15 @@ def build_landscape_cards_pdf(
 
         vehicle_parts = [p for p in [year, make, model] if p and p.upper() != "TBD"]
         vehicle_text = " ".join(vehicle_parts) if vehicle_parts else "_________________________________________"
+        class_name = (r.get("judging_class_name") or "").strip()
+        class_code = (r.get("judging_class_code") or "").strip()
+        class_needs_review = int(r.get("class_needs_review") or 0) == 1
+        if class_name:
+            class_text = f"{class_code} - {class_name}" if class_code else class_name
+        elif class_needs_review:
+            class_text = "STAFF REVIEW"
+        else:
+            class_text = "____________________________"
 
         is_voting_card = card_is_voting()
         mode = card_layout_mode()
@@ -343,9 +353,14 @@ def build_landscape_cards_pdf(
         c.setFont("Helvetica", 11)
         c.drawString(margin + 10, body_y + body_h - 110, vehicle_text[:40])
 
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin + 10, body_y + body_h - 132, "Class")
+        c.setFont("Helvetica", 10)
+        c.drawString(margin + 10, body_y + body_h - 148, class_text[:42])
+
         if is_voting_card:
             c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin + 10, body_y + body_h - 146, "How voting works")
+            c.drawString(margin + 10, body_y + body_h - 174, "How voting works")
             c.setFont("Helvetica", 10)
             info_lines = [
                 "1. Scan a code on the right.",
@@ -354,7 +369,7 @@ def build_landscape_cards_pdf(
                 "Votes are counted according",
                 "to this show's rules.",
             ]
-            yy = body_y + body_h - 162
+            yy = body_y + body_h - 190
             for line in info_lines:
                 c.drawString(margin + 12, yy, line)
                 yy -= 14
@@ -374,9 +389,9 @@ def build_landscape_cards_pdf(
                 yy -= 10
         else:
             c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin + 10, body_y + body_h - 146, "Event information")
+            c.drawString(margin + 10, body_y + body_h - 174, "Event information")
             c.setFont("Helvetica", 9.5)
-            yy = body_y + body_h - 164
+            yy = body_y + body_h - 192
             for line in wrap_text(card_message, 32)[:10]:
                 c.drawString(margin + 12, yy, line)
                 yy -= 13
@@ -596,7 +611,7 @@ def build_landscape_cards_pdf(
                 "1. Scan the QR code.",
                 "2. Enter owner and vehicle information.",
                 "3. Sign the waiver electronically.",
-                "4. Complete registration payment if required.",
+                "4. Payment was already collected at the booth.",
             ]
             yy = steps_y - 26
             for line in step_lines:
