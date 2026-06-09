@@ -2016,9 +2016,7 @@ def get_show_car_admin_by_id(show_id: int, show_car_id: int) -> Optional[sqlite3
         JOIN people p ON p.id = sc.person_id
         LEFT JOIN show_registration_slots slot ON slot.id = sc.registration_slot_id
         LEFT JOIN show_judging_classes jc ON jc.id = sc.judging_class_id
-        WHERE sc.show_id = ? AND sc.id = ?
-        LIMIT 1
-        """,
+    """,
         (int(show_id), int(show_car_id)),
     ).fetchone()
     conn.close()
