@@ -395,8 +395,15 @@
 
 
       <div class="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <h3 class="text-lg font-semibold text-slate-900">Registration Days / Sessions / Activities</h3>
-        <p class="mt-1 text-sm text-slate-600">Each active row becomes a selectable registration day/session/activity. Set any capacity that matches the client or parking lot size. Leave capacity blank/0 for no cap.</p>
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-900">Registration Day / Session</h3>
+            <p class="mt-1 text-sm text-slate-600">
+              Most shows only need one registration day. Add more only when the event has multiple days, sessions, activities, or separate capacity limits.
+            </p>
+          </div>
+          <button type="button" id="addSlotBtn" class="btn btn-outline whitespace-nowrap">Add another day/session</button>
+        </div>
         {% set existing_slot_mode = (s['registration_slot_selection_mode'] if 'registration_slot_selection_mode' in s.keys() else 'single') %}
         <div class="mt-4 rounded-2xl bg-white border border-blue-100 p-4">
           <label class="block text-sm font-semibold text-slate-700 mb-1">Selection rule</label>
@@ -404,32 +411,33 @@
             <option value="single" {% if existing_slot_mode != 'multiple' %}selected{% endif %}>One only — radio buttons</option>
             <option value="multiple" {% if existing_slot_mode == 'multiple' %}selected{% endif %}>Multiple allowed — checkboxes</option>
           </select>
+          <div class="mt-1 text-xs text-slate-500">Default is one day/session. Use multiple only for multi-day events, tours, tech sessions, or optional activities.</div>
         </div>
         {% set existing_slots = slots_by_show.get(s['id'], []) if slots_by_show else [] %}
-        <div class="mt-4 grid gap-3">
+        <div class="mt-4 grid gap-3" id="registrationSlotsBox">
           {% for i in range(1, 6) %}
           {% set slot = existing_slots[i-1] if existing_slots|length >= i else None %}
-          <div class="grid grid-cols-1 md:grid-cols-7 gap-3 rounded-2xl bg-white border border-blue-100 p-3">
+          <div class="slot-row grid grid-cols-1 md:grid-cols-7 gap-3 rounded-2xl bg-white border border-blue-100 p-3 {% if i > 1 and not slot %}hidden{% endif %}" data-slot-index="{{ i }}">
             <input type="hidden" name="slot_{{ i }}_id" value="{{ slot['id'] if slot else '' }}">
             <div class="md:col-span-2">
               <label class="block text-xs font-semibold text-slate-600 mb-1">Label</label>
-              <input name="slot_{{ i }}_label" value="{{ slot['slot_label'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Saturday Cruise-In">
+              <input name="slot_{{ i }}_label" value="{{ slot['slot_label'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Main show day">
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Date</label>
-              <input name="slot_{{ i }}_date" value="{{ slot['slot_date'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Sat Jun 20">
+              <input name="slot_{{ i }}_date" value="{{ slot['slot_date'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Event date">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Cars Arrive</label>
-              <input name="slot_{{ i }}_cars_arrive_time" value="{{ slot['cars_arrive_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="3:30 PM">
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Arrival Time</label>
+              <input name="slot_{{ i }}_cars_arrive_time" value="{{ slot['cars_arrive_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Arrival time">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Public Start</label>
-              <input name="slot_{{ i }}_start_time" value="{{ slot['start_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="4 PM">
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Start</label>
+              <input name="slot_{{ i }}_start_time" value="{{ slot['start_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Start time">
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">End</label>
-              <input name="slot_{{ i }}_end_time" value="{{ slot['end_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="8 PM">
+              <input name="slot_{{ i }}_end_time" value="{{ slot['end_time'] if slot else '' }}" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="End time">
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Cap</label>
@@ -443,13 +451,30 @@
             </div>
             <div class="md:col-span-7">
               <label class="block text-xs font-semibold text-slate-600 mb-1">Participant Instructions</label>
-              <textarea name="slot_{{ i }}_participant_instructions" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Example: Please arrive by 7:00 AM and plan to stay through 1:00 PM.">{{ slot['participant_instructions'] if slot else '' }}</textarea>
+              <textarea name="slot_{{ i }}_participant_instructions" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2" placeholder="Optional instructions for this day/session. Example: Enter from the north lot.">{{ slot['participant_instructions'] if slot else '' }}</textarea>
             </div>
             <input type="hidden" name="slot_{{ i }}_sort_order" value="{{ slot['sort_order'] if slot else i * 10 }}">
             <label class="md:col-span-7 flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" name="slot_{{ i }}_is_active" {% if not slot or slot['is_active'] == 1 %}checked{% endif %}> Active / visible to public registration</label>
           </div>
           {% endfor %}
         </div>
+        <script>
+          (function () {
+            const btn = document.getElementById("addSlotBtn");
+            const rows = Array.from(document.querySelectorAll(".slot-row"));
+            if (!btn || !rows.length) return;
+            function updateButton() {
+              const hidden = rows.filter(row => row.classList.contains("hidden"));
+              btn.style.display = hidden.length ? "inline-flex" : "none";
+            }
+            btn.addEventListener("click", function () {
+              const next = rows.find(row => row.classList.contains("hidden"));
+              if (next) next.classList.remove("hidden");
+              updateButton();
+            });
+            updateButton();
+          })();
+        </script>
       </div>
 
       <div class="md:col-span-2">
@@ -476,6 +501,9 @@
         <div class="text-xs font-semibold tracking-wide text-slate-500">PARTICIPANT / JUDGE VOTING</div>
         <h2 class="mt-1 text-xl font-semibold">Restricted voting access</h2>
         <p class="mt-1 text-sm text-slate-600">Use this for participant-only judging, staff-issued judge codes, school/team voting later, and one vote per category.</p>
+        <div class="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+          <strong>Simple participant judging:</strong> no judge import is required. Registered participants get voting access from the QR printed on the back of their windshield card. When they scan it, the system creates their voter record from the car registration and allows one vote per category. Use manual judge codes only for outside judges, staff judges, or special voting groups.
+        </div>
       </div>
       <form method="POST" action="{{ url_for('admin_create_judge_code', show_id=s['id']) }}" class="rounded-2xl border border-slate-200 bg-slate-50 p-4 grid gap-3 md:min-w-[360px]">
         <div class="font-semibold text-slate-900">Create judge access code</div>
