@@ -163,6 +163,25 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+    # Judging class table migrations
+    # Safe for existing Railway databases where the table may already exist
+    # but may be missing newer columns.
+    for sql in [
+        "ALTER TABLE show_judging_classes ADD COLUMN class_name TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN class_code TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN year_min INTEGER",
+        "ALTER TABLE show_judging_classes ADD COLUMN year_max INTEGER",
+        "ALTER TABLE show_judging_classes ADD COLUMN make_contains TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN model_contains TEXT",
+        "ALTER TABLE show_judging_classes ADD COLUMN award_places INTEGER NOT NULL DEFAULT 3",
+        "ALTER TABLE show_judging_classes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
+        "ALTER TABLE show_judging_classes ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+        
     try:
         cur.execute("ALTER TABLE waiver_templates ADD COLUMN preset_key TEXT NOT NULL DEFAULT 'standard'")
     except sqlite3.OperationalError:
