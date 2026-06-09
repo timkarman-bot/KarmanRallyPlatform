@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% set title = "Paper Ballot Entry • Admin" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-6">
+  <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div>
+        <div class="text-xs font-semibold text-slate-500">PAPER BALLOT ENTRY</div>
+        <h1 class="mt-1 text-3xl font-semibold tracking-tight">{{ show['title'] }}</h1>
+        <p class="mt-2 text-slate-600">Enter one paper ballot. The form is built from this show's active judging/voting classes.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a class="btn btn-outline" href="{{ url_for('admin_command_center') }}">Command Center</a>
+        <a class="btn btn-outline" href="{{ url_for('admin_paper_ballots_print', show_id=show['id']) }}" target="_blank">Print Blank Ballot</a>
+        <a class="btn btn-outline" href="{{ url_for('admin_paper_ballots_template_csv', show_id=show['id']) }}">Download CSV Template</a>
+        <a class="btn btn-outline" href="{{ url_for('admin_paper_ballots_import_page', show_id=show['id']) }}">Import CSV</a>
+      </div>
+    </div>
+  </div>
+
+  {% if result %}
+    <div class="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
+      <div class="font-semibold">Ballot saved.</div>
+      <div class="mt-1 text-sm">{{ result.accepted_count }} vote line{{ '' if result.accepted_count == 1 else 's' }} counted.</div>
+    </div>
+  {% endif %}
+
+  {% if errors %}
+    <div class="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-900">
+      <div class="font-semibold">Please fix before counting this ballot.</div>
+      <ul class="mt-2 list-disc pl-5 text-sm space-y-1">
+        {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if not classes %}
+    <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+      <h2 class="text-xl font-semibold">No active voting classes</h2>
+      <p class="mt-2 text-slate-600">Add judging/voting classes on the show detail page before entering paper ballots.</p>
+    </div>
+  {% else %}
+  <form method="POST" action="{{ url_for('admin_paper_ballots_submit') }}" class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <input type="hidden" name="show_id" value="{{ show['id'] }}">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-sm font-semibold">Ballot label / number <span class="text-slate-500">optional</span></label>
+        <input name="ballot_label" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: Ballot 12">
+      </div>
+      <div>
+        <label class="text-sm font-semibold">Notes <span class="text-slate-500">optional</span></label>
+        <input name="notes" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: hard to read, confirmed by staff">
+      </div>
+    </div>
+
+    <div class="mt-6 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-500 border-b border-slate-200">
+            <th class="py-2 pr-4">Class</th>
+            <th class="py-2 pr-4">1st place car #</th>
+            <th class="py-2 pr-4">2nd place car #</th>
+            <th class="py-2 pr-4">3rd place car #</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for c in classes %}
+          <tr>
+            <td class="py-3 pr-4">
+              <div class="font-semibold text-slate-900">{{ c['class_name'] }}</div>
+              {% if c['class_code'] %}<div class="text-xs text-slate-500">{{ c['class_code'] }}</div>{% endif %}
+            </td>
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_first" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_second" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_third" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="mt-6 flex flex-wrap gap-3 items-center">
+      <button class="btn btn-primary" type="submit">Count This Paper Ballot</button>
+      <span class="text-sm text-slate-500">Leave blanks for classes/places the voter did not fill in.</span>
+    </div>
+  </form>
+  {% endif %}
+
+  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <h2 class="text-xl font-semibold">Recent paper ballots</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead><tr class="text-left text-slate-500 border-b border-slate-200"><th class="py-2 pr-4">Time</th><th class="py-2 pr-4">Label</th><th class="py-2 pr-4">Source</th><th class="py-2 pr-4">Vote lines</th><th class="py-2 pr-4">Entered by</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for b in recent_ballots %}<tr><td class="py-2 pr-4">{{ b['created_at'] }}</td><td class="py-2 pr-4">{{ b['ballot_label'] or b['ballot_token'] }}</td><td class="py-2 pr-4">{{ b['source'] }}</td><td class="py-2 pr-4">{{ b['vote_lines'] }}</td><td class="py-2 pr-4">{{ b['entered_by'] or '—' }}</td></tr>{% else %}<tr><td colspan="5" class="py-4 text-slate-500">No paper ballots entered yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const inputs = Array.from(document.querySelectorAll('.paper-entry'));
+  inputs.forEach((input, idx) => {
+    input.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const next = inputs[idx + 1];
+        if (next) next.focus();
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

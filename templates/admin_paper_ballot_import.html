@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set title = "Import Paper Votes • Admin" %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+  <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div>
+        <div class="text-xs font-semibold text-slate-500">PAPER VOTE IMPORT</div>
+        <h1 class="mt-1 text-3xl font-semibold">{{ show['title'] }}</h1>
+        <p class="mt-2 text-slate-600">Import staff-entered paper votes from the system-generated CSV template.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a class="btn btn-outline" href="{{ url_for('admin_paper_ballots', show_id=show['id']) }}">Enter Manually</a>
+        <a class="btn btn-outline" href="{{ url_for('admin_paper_ballots_template_csv', show_id=show['id']) }}">Download CSV Template</a>
+      </div>
+    </div>
+  </div>
+
+  {% if result and result.ok %}
+  <div class="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
+    <div class="font-semibold">Import completed.</div>
+    <div class="mt-1 text-sm">{{ result.created_ballots }} ballot{{ '' if result.created_ballots == 1 else 's' }} and {{ result.vote_lines }} vote line{{ '' if result.vote_lines == 1 else 's' }} counted.</div>
+  </div>
+  {% endif %}
+
+  {% if errors %}
+  <div class="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-900">
+    <div class="font-semibold">Import was not completed.</div>
+    <ul class="mt-2 list-disc pl-5 text-sm space-y-1">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <form method="POST" action="{{ url_for('admin_paper_ballots_import_submit') }}" enctype="multipart/form-data" class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+    <input type="hidden" name="show_id" value="{{ show['id'] }}">
+    <label class="text-sm font-semibold">CSV file</label>
+    <input type="file" name="csv_file" accept=".csv,text/csv" class="mt-2 block w-full rounded-2xl border border-slate-200 px-4 py-3">
+    <button class="mt-5 btn btn-primary" type="submit">Import Paper Votes</button>
+  </form>
+
+  <div class="rounded-3xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-950">
+    <div class="font-semibold">CSV format</div>
+    <p class="mt-1">Use the downloaded template. One row equals one class on one ballot. Fill in first_car_number, second_car_number, and third_car_number. To enter multiple ballots, use the same ballot_label for each row in that ballot.</p>
+  </div>
+</div>
+{% endblock %}

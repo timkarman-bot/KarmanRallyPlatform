@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Paper Ballot - {{ show['title'] }}</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 32px; color: #111827; }
+    h1 { margin-bottom: 4px; }
+    .muted { color: #475569; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+    th, td { border: 1px solid #111827; padding: 10px; text-align: left; }
+    th { background: #f1f5f9; }
+    .box { height: 26px; }
+    @media print { button { display:none; } body { margin: 20px; } }
+  </style>
+</head>
+<body>
+  <button onclick="window.print()">Print</button>
+  <h1>{{ show['title'] }}</h1>
+  <div class="muted">Paper judging ballot generated from active voting classes.</div>
+  <div class="muted">Write car numbers only. One ballot may list 1st, 2nd, and 3rd choice for each class.</div>
+
+  <p><strong>Ballot #:</strong> ____________________</p>
+
+  <table>
+    <thead><tr><th>Class</th><th>1st place car #</th><th>2nd place car #</th><th>3rd place car #</th></tr></thead>
+    <tbody>
+      {% for c in classes %}
+      <tr>
+        <td><strong>{{ c['class_name'] }}</strong>{% if c['class_code'] %}<br><span class="muted">{{ c['class_code'] }}</span>{% endif %}</td>
+        <td class="box"></td><td class="box"></td><td class="box"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

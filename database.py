@@ -457,6 +457,51 @@ def init_db() -> None:
 
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS paper_ballots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            show_id INTEGER NOT NULL,
+            ballot_token TEXT NOT NULL UNIQUE,
+            ballot_label TEXT,
+            source TEXT NOT NULL DEFAULT 'manual',
+            entered_by TEXT,
+            status TEXT NOT NULL DEFAULT 'accepted',
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_ballot_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_ballot_id INTEGER NOT NULL,
+            show_id INTEGER NOT NULL,
+            judging_class_id INTEGER NOT NULL,
+            placement INTEGER NOT NULL,
+            selected_show_car_id INTEGER NOT NULL,
+            selected_car_number INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(paper_ballot_id, judging_class_id, placement),
+            FOREIGN KEY(paper_ballot_id) REFERENCES paper_ballots(id),
+            FOREIGN KEY(show_id) REFERENCES shows(id),
+            FOREIGN KEY(judging_class_id) REFERENCES show_judging_classes(id),
+            FOREIGN KEY(selected_show_car_id) REFERENCES show_cars(id)
+        )
+        """
+    )
+
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_paper_ballots_show_id ON paper_ballots(show_id)",
+        "CREATE INDEX IF NOT EXISTS idx_paper_ballot_votes_show_class ON paper_ballot_votes(show_id, judging_class_id)",
+    ]:
+        cur.execute(sql)
+
+
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS sponsors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -1556,20 +1601,62 @@ def show_slot_has_capacity(show_id: int, registration_slot_id: Optional[int]) ->
 
 
 def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str, Any]]) -> None:
-    """Upsert registration day/session slots for a show. Blank labels are ignored."""
+    """Upsert registration day/session slots for a show.
+
+    Admin page behavior:
+    - A normal one-day show does not need any slot rows saved.
+    - Blank rows are ignored.
+    - Blank existing rows are made inactive so old empty/default rows do not keep showing.
+    - Slots not submitted by the form are made inactive, not deleted, to preserve history.
+    """
     conn = _conn()
     cur = conn.cursor()
     try:
         cur.execute("BEGIN IMMEDIATE")
         seen_ids = set()
         for idx, payload in enumerate(slot_payloads):
-            label = (payload.get("slot_label") or "").strip()
-            if not label:
-                continue
             raw_id = str(payload.get("id") or "").strip()
             slot_id = int(raw_id) if raw_id.isdigit() else None
+            label = (payload.get("slot_label") or "").strip()
+            slot_date = (payload.get("slot_date") or "").strip()
+            cars_arrive_time = (payload.get("cars_arrive_time") or "").strip()
+            start_time = (payload.get("start_time") or "").strip()
+            end_time = (payload.get("end_time") or "").strip()
+            participant_instructions = (payload.get("participant_instructions") or "").strip()
+            raw_capacity = str(payload.get("capacity") or "").strip()
+
+            has_any_content = any([
+                label,
+                slot_date,
+                cars_arrive_time,
+                start_time,
+                end_time,
+                participant_instructions,
+                raw_capacity,
+            ])
+
+            # If an existing row was cleared on the form, keep the row for history
+            # but make it inactive so it does not appear in public registration.
+            if not has_any_content:
+                if slot_id:
+                    cur.execute(
+                        """
+                        UPDATE show_registration_slots
+                        SET is_active = 0, updated_at = datetime('now')
+                        WHERE show_id = ? AND id = ?
+                        """,
+                        (show_id, slot_id),
+                    )
+                    seen_ids.add(slot_id)
+                continue
+
+            # A row with details but no label gets a safe generic label.
+            # This prevents an accidental blank label from creating a confusing public option.
+            if not label:
+                label = "Main show day" if idx == 0 else f"Day / Session {idx + 1}"
+
             try:
-                capacity = int(payload.get("capacity") or 0)
+                capacity = int(raw_capacity or 0)
             except Exception:
                 capacity = 0
             if capacity < 0:
@@ -1581,11 +1668,11 @@ def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str,
             is_active = 1 if str(payload.get("is_active") or "").lower() in {"1", "true", "yes", "on"} else 0
             values = (
                 label,
-                (payload.get("slot_date") or "").strip(),
-                (payload.get("cars_arrive_time") or "").strip(),
-                (payload.get("start_time") or "").strip(),
-                (payload.get("end_time") or "").strip(),
-                (payload.get("participant_instructions") or "").strip(),
+                slot_date,
+                cars_arrive_time,
+                start_time,
+                end_time,
+                participant_instructions,
                 capacity,
                 sort_order,
                 is_active,
@@ -1612,13 +1699,34 @@ def save_registration_slots_for_show(show_id: int, slot_payloads: List[Dict[str,
                     values,
                 )
                 seen_ids.add(int(cur.lastrowid))
+
+        # Rows hidden/removed from the admin form should no longer be active.
+        # They are not deleted because old registrations may still reference them.
+        if seen_ids:
+            marks = ",".join("?" for _ in seen_ids)
+            cur.execute(
+                f"""
+                UPDATE show_registration_slots
+                SET is_active = 0, updated_at = datetime('now')
+                WHERE show_id = ? AND id NOT IN ({marks})
+                """,
+                (show_id, *sorted(seen_ids)),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE show_registration_slots
+                SET is_active = 0, updated_at = datetime('now')
+                WHERE show_id = ?
+                """,
+                (show_id,),
+            )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
-
 
 def set_show_voting_open(show_id: int, voting_open: bool) -> None:
     conn = _conn()
@@ -3535,6 +3643,235 @@ def leaderboard_overall(show_id: int, start_date: str = "", end_date: str = "") 
     ).fetchall()
     conn.close()
     return [(int(r["car_number"]), int(r["total_votes"] or 0)) for r in rows]
+
+
+
+# PAPER BALLOTS / MANUAL VOTE ENTRY
+
+
+def _paper_vote_category(class_row: sqlite3.Row, placement: int) -> str:
+    code = (class_row["class_code"] or "").strip() if "class_code" in class_row.keys() else ""
+    name = (class_row["class_name"] or "").strip() if "class_name" in class_row.keys() else ""
+    base = code or name or f"Class {class_row['id']}"
+    suffix = {1: "1st", 2: "2nd", 3: "3rd"}.get(int(placement), f"Place {placement}")
+    return f"{base} - {suffix}"
+
+
+def list_paper_ballot_classes(show_id: int) -> List[sqlite3.Row]:
+    """Active judging/voting classes used to build paper ballots."""
+    return list_judging_classes(int(show_id), active_only=True)
+
+
+def _find_show_car_for_class(conn: sqlite3.Connection, show_id: int, judging_class_id: int, car_number: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT sc.*, p.name AS owner_name
+        FROM show_cars sc
+        LEFT JOIN people p ON p.id = sc.person_id
+        WHERE sc.show_id = ?
+          AND sc.car_number = ?
+          AND COALESCE(sc.registration_state, '') != 'removed'
+          AND COALESCE(sc.registration_payment_status, '') NOT IN ('removed', 'canceled', 'refunded')
+          AND COALESCE(sc.is_placeholder, 0) = 0
+          AND COALESCE(sc.judging_class_id, 0) = ?
+        LIMIT 1
+        """,
+        (int(show_id), int(car_number), int(judging_class_id)),
+    ).fetchone()
+
+
+def create_paper_ballot_with_votes(
+    show_id: int,
+    selections: Dict[int, Dict[int, int]],
+    *,
+    ballot_label: str = "",
+    source: str = "manual",
+    entered_by: str = "",
+    notes: str = "",
+) -> Dict[str, Any]:
+    """Create one paper ballot and count its 1st/2nd/3rd choices.
+
+    selections shape:
+        {judging_class_id: {1: car_number, 2: car_number, 3: car_number}}
+
+    Business rules:
+    - One paper ballot can cast only one 1st, one 2nd, and one 3rd choice per class.
+    - The selected car number must exist in that same judging class for the show.
+    - Paper votes are also inserted into the existing votes table so current leaderboards/export still work.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    errors: List[str] = []
+    accepted: List[Dict[str, Any]] = []
+
+    classes = {int(c["id"]): c for c in list_judging_classes(int(show_id), active_only=True)}
+    cleaned: Dict[int, Dict[int, int]] = {}
+
+    for class_id, places in (selections or {}).items():
+        try:
+            class_id = int(class_id)
+        except Exception:
+            continue
+        if class_id not in classes:
+            errors.append(f"Class ID {class_id} is not active for this show.")
+            continue
+        seen_numbers = set()
+        cleaned[class_id] = {}
+        for placement in (1, 2, 3):
+            raw_number = (places or {}).get(placement)
+            if raw_number in (None, ""):
+                continue
+            try:
+                car_number = int(raw_number)
+            except Exception:
+                errors.append(f"{classes[class_id]['class_name']} {placement}: car number must be numeric.")
+                continue
+            if car_number in seen_numbers:
+                errors.append(f"{classes[class_id]['class_name']}: car #{car_number} was entered more than once on the same ballot.")
+                continue
+            seen_numbers.add(car_number)
+            car = _find_show_car_for_class(conn, int(show_id), class_id, car_number)
+            if not car:
+                errors.append(f"{classes[class_id]['class_name']} {placement}: car #{car_number} is not registered in this class.")
+                continue
+            cleaned[class_id][placement] = car_number
+            accepted.append({
+                "class_id": class_id,
+                "class_name": classes[class_id]["class_name"],
+                "placement": placement,
+                "car_number": car_number,
+                "show_car_id": int(car["id"]),
+            })
+
+    if errors:
+        conn.close()
+        return {"ok": False, "errors": errors, "accepted_count": 0}
+
+    if not accepted:
+        conn.close()
+        return {"ok": False, "errors": ["No valid votes were entered."], "accepted_count": 0}
+
+    token = secrets.token_urlsafe(12)
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute(
+            """
+            INSERT INTO paper_ballots (show_id, ballot_token, ballot_label, source, entered_by, status, notes)
+            VALUES (?, ?, ?, ?, ?, 'accepted', ?)
+            """,
+            (int(show_id), token, ballot_label or None, source or "manual", entered_by or None, notes or None),
+        )
+        ballot_id = int(cur.lastrowid)
+
+        for item in accepted:
+            class_row = classes[int(item["class_id"])]
+            category = _paper_vote_category(class_row, int(item["placement"]))
+            synthetic_session_id = f"paper_{ballot_id}_{item['class_id']}_{item['placement']}"
+            cur.execute(
+                """
+                INSERT INTO paper_ballot_votes (
+                    paper_ballot_id, show_id, judging_class_id, placement,
+                    selected_show_car_id, selected_car_number, category
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (ballot_id, int(show_id), int(item["class_id"]), int(item["placement"]), int(item["show_car_id"]), int(item["car_number"]), category),
+            )
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO votes (show_id, show_car_id, category, vote_qty, amount_cents, stripe_session_id)
+                VALUES (?, ?, ?, 1, 0, ?)
+                """,
+                (int(show_id), int(item["show_car_id"]), category, synthetic_session_id),
+            )
+
+        conn.commit()
+        return {"ok": True, "ballot_id": ballot_id, "ballot_token": token, "accepted_count": len(accepted), "errors": []}
+    except Exception as exc:
+        conn.rollback()
+        return {"ok": False, "errors": [str(exc)], "accepted_count": 0}
+    finally:
+        conn.close()
+
+
+def list_recent_paper_ballots(show_id: int, limit: int = 25) -> List[sqlite3.Row]:
+    conn = _conn()
+    try:
+        return conn.execute(
+            """
+            SELECT pb.*,
+                   COUNT(pbv.id) AS vote_lines
+            FROM paper_ballots pb
+            LEFT JOIN paper_ballot_votes pbv ON pbv.paper_ballot_id = pb.id
+            WHERE pb.show_id = ?
+            GROUP BY pb.id
+            ORDER BY pb.created_at DESC, pb.id DESC
+            LIMIT ?
+            """,
+            (int(show_id), int(limit)),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def build_paper_ballot_csv_template(show_id: int) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ballot_label", "class_code", "class_name", "first_car_number", "second_car_number", "third_car_number"])
+    for c in list_paper_ballot_classes(int(show_id)):
+        writer.writerow(["", c["class_code"] or "", c["class_name"] or "", "", "", ""])
+    return output.getvalue()
+
+
+def import_paper_ballot_csv(show_id: int, csv_text: str, *, entered_by: str = "") -> Dict[str, Any]:
+    reader = csv.DictReader(io.StringIO(csv_text or ""))
+    if not reader.fieldnames:
+        return {"ok": False, "created_ballots": 0, "vote_lines": 0, "errors": ["CSV file is missing a header row."]}
+
+    classes = list_paper_ballot_classes(int(show_id))
+    by_code = {str(c["class_code"] or "").strip().lower(): c for c in classes if str(c["class_code"] or "").strip()}
+    by_name = {str(c["class_name"] or "").strip().lower(): c for c in classes if str(c["class_name"] or "").strip()}
+
+    grouped: Dict[str, Dict[int, Dict[int, int]]] = {}
+    errors: List[str] = []
+
+    for idx, row in enumerate(reader, start=2):
+        row = {str(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        label = row.get("ballot_label") or row.get("ballot") or f"import-row-{idx}"
+        class_key = (row.get("class_code") or "").strip().lower()
+        class_name = (row.get("class_name") or row.get("class") or "").strip().lower()
+        class_row = by_code.get(class_key) if class_key else None
+        if not class_row and class_name:
+            class_row = by_name.get(class_name)
+        if not class_row:
+            errors.append(f"Row {idx}: class not found ({row.get('class_code') or row.get('class_name') or row.get('class')}).")
+            continue
+        class_id = int(class_row["id"])
+        grouped.setdefault(label, {})[class_id] = {}
+        for placement, col in [(1, "first_car_number"), (2, "second_car_number"), (3, "third_car_number")]:
+            raw = row.get(col) or row.get({1:"first",2:"second",3:"third"}[placement]) or ""
+            if raw:
+                grouped[label][class_id][placement] = raw
+
+    if errors:
+        return {"ok": False, "created_ballots": 0, "vote_lines": 0, "errors": errors}
+
+    created = 0
+    vote_lines = 0
+    for label, selections in grouped.items():
+        result = create_paper_ballot_with_votes(
+            int(show_id),
+            selections,
+            ballot_label=label,
+            source="csv_import",
+            entered_by=entered_by,
+        )
+        if not result.get("ok"):
+            errors.extend([f"{label}: {e}" for e in result.get("errors", [])])
+        else:
+            created += 1
+            vote_lines += int(result.get("accepted_count") or 0)
+
+    return {"ok": not errors, "created_ballots": created, "vote_lines": vote_lines, "errors": errors}
 
 
 # SPONSORS
