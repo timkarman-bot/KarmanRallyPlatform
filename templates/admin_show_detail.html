@@ -31,6 +31,7 @@
       </div>
 
       <div class="flex flex-wrap gap-2">
+        {% if admin_is_super %}
         <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}">
           <button type="submit" class="btn btn-outline">Set Active</button>
         </form>
@@ -40,6 +41,7 @@
         <form method="POST" action="{{ url_for('admin_shows_set_past', show_id=s['id']) }}">
           <button type="submit" class="btn btn-outline">Set Past + Auto Save Export</button>
         </form>
+        {% endif %}
         <a class="btn btn-outline" href="{{ url_for('admin_export_show_zip', show_id=s['id']) }}">Download Data ZIP</a>
         <form method="POST" action="{{ url_for('admin_show_close_and_export', show_id=s['id']) }}">
           <button type="submit" class="btn btn-primary">Close + Export</button>

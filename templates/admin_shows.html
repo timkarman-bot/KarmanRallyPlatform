@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set title = "Shows • Karman Kar Shows & Events" %}
+{% set title = "Shows • Karman Rally Platform" %}
 
 {% macro show_table(title, rows, empty_text, collapsed=False) %}
 <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
@@ -46,9 +46,11 @@
               <a class="btn btn-outline" href="{{ url_for('admin_show_detail', show_id=s['id']) }}">Manage</a>
               <a class="btn btn-outline" href="{{ url_for('admin_show_import', show_id=s['id']) }}">Import</a>
               <a class="btn btn-outline" href="{{ url_for('admin_export_show_zip', show_id=s['id']) }}">Export</a>
-              <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Active</button></form>
-              <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Upcoming</button></form>
-              <form method="POST" action="{{ url_for('admin_shows_archive', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Archive</button></form>
+              {% if admin_is_super %}
+                <form method="POST" action="{{ url_for('admin_shows_set_active', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Active</button></form>
+                <form method="POST" action="{{ url_for('admin_shows_set_upcoming', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Set Upcoming</button></form>
+                <form method="POST" action="{{ url_for('admin_shows_archive', show_id=s['id']) }}"><button class="btn btn-outline" type="submit">Archive</button></form>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -69,9 +71,17 @@
     <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
       <div>
         <h1 class="text-3xl font-semibold">Shows</h1>
-        <p class="mt-2 text-slate-600">Clean list view. Click Manage to edit details, schedules, classes, card settings, and imports.</p>
+        <p class="mt-2 text-slate-600">
+          {% if admin_is_super %}
+            Super admin view. You can see every show.
+          {% else %}
+            Scoped view. You only see shows assigned to your admin account.
+          {% endif %}
+        </p>
       </div>
-      <a class="btn btn-primary" href="#create-show">Create New Show</a>
+      {% if can_create_shows %}
+        <a class="btn btn-primary" href="#create-show">Create New Show</a>
+      {% endif %}
     </div>
   </div>
 
@@ -89,19 +99,12 @@
   </section>
   {% endif %}
 
-  {% if pending_vote_reviews %}
-  <section class="rounded-3xl border border-amber-200 bg-amber-50 p-6">
-    <h2 class="text-xl font-semibold text-slate-900">Pending External Vote Reviews</h2>
-    <p class="mt-1 text-sm text-amber-900">{{ pending_vote_reviews|length }} votes need review.</p>
-    <div class="mt-3"><a class="btn btn-outline" href="{{ url_for('admin_vote_reviews') if false else '#' }}">Review from the vote review panel</a></div>
-  </section>
-  {% endif %}
-
   {{ show_table('Active Shows', active_shows, 'No active show right now.') }}
   {{ show_table('Upcoming Shows', upcoming_shows, 'No upcoming shows yet.') }}
   {{ show_table('Draft Shows', draft_shows, 'No draft shows.') }}
   {{ show_table('Archived Shows', archived_shows, 'No archived shows yet.', True) }}
 
+  {% if can_create_shows %}
   <section id="create-show" class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <h2 class="text-xl font-semibold">Create New Show</h2>
     <p class="mt-1 text-sm text-slate-500">Start with the basics. After creation, open Manage to add schedules, classes, imports, and card settings.</p>
@@ -120,5 +123,6 @@
       <div class="md:col-span-2"><button type="submit" class="btn btn-primary">Create Show</button></div>
     </form>
   </section>
+  {% endif %}
 </div>
 {% endblock %}

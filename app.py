@@ -39,7 +39,7 @@ import smtplib
 from email.message import EmailMessage
 
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
 from sponsorship_blueprint import sponsorship_bp
 from database import (
@@ -128,6 +128,17 @@ from database import (
     import_judging_classes_for_show,
     import_registered_cars_for_show,
     archive_show,
+    get_admin_user_by_email,
+    get_admin_user_by_id,
+    create_admin_user,
+    list_admin_users,
+    set_admin_user_active,
+    assign_admin_user_show_role,
+    remove_admin_user_show_role,
+    list_admin_user_show_roles,
+    admin_user_can_access_show,
+    list_show_ids_for_admin_user,
+    list_shows_admin_for_user,
 )
 
 
@@ -247,9 +258,9 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.8.4-beta"
+APP_VERSION = "0.9.0-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Multi-Show Registration Picker Beta"
+APP_RELEASE_NAME = "Show Ownership / Role-Based Admin Beta"
 
 
 def prereg_allowed(show) -> bool:
@@ -1074,6 +1085,89 @@ def require_admin(view_func):
         return view_func(*args, **kwargs)
     return wrapped
 
+def _current_admin_user_id() -> Optional[int]:
+    raw = session.get("admin_user_id")
+    try:
+        return int(raw) if raw is not None else None
+    except Exception:
+        return None
+
+
+def _current_admin_role() -> str:
+    if not session.get("admin_authed"):
+        return ""
+    role = (session.get("admin_role") or "").strip().lower()
+    return role or "super_admin"
+
+
+def _admin_is_super() -> bool:
+    return bool(session.get("admin_authed")) and _current_admin_role() == "super_admin"
+
+
+def _current_admin_label() -> str:
+    return session.get("admin_name") or session.get("admin_email") or ("Super Admin" if _admin_is_super() else "Admin")
+
+
+def _admin_allowed_show_ids() -> list[int]:
+    if _admin_is_super():
+        return []
+    admin_user_id = _current_admin_user_id()
+    if not admin_user_id:
+        return []
+    try:
+        return list_show_ids_for_admin_user(admin_user_id)
+    except Exception:
+        return []
+
+
+def _admin_can_access_show(show_id: int) -> bool:
+    if _admin_is_super():
+        return True
+    admin_user_id = _current_admin_user_id()
+    if not admin_user_id:
+        return False
+    try:
+        return admin_user_can_access_show(admin_user_id, int(show_id))
+    except Exception:
+        return False
+
+
+def _require_show_access(show_id: int) -> None:
+    if not _admin_can_access_show(int(show_id)):
+        abort(403, "You do not have access to this show.")
+
+
+def require_super_admin(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("admin_authed"):
+            return redirect(url_for("admin_page", next=request.path))
+        if not _admin_is_super():
+            abort(403, "Super admin access required.")
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def _admin_visible_shows():
+    return list_shows_admin_for_user(_current_admin_user_id(), _admin_is_super())
+
+
+def _admin_current_show():
+    """Return active show for super admin, or the first accessible active/upcoming show for scoped users."""
+    if _admin_is_super():
+        return get_active_show()
+
+    shows = _admin_visible_shows()
+    if not shows:
+        return None
+
+    active = get_active_show()
+    if active and any(int(s["id"]) == int(active["id"]) for s in shows):
+        return active
+
+    return shows[0]
+
+
 
 def _maybe_auto_close_voting() -> None:
     end_raw = os.getenv("VOTING_END", "").strip()
@@ -1154,6 +1248,9 @@ def inject_globals():
         "title_sponsor": title_sponsor,
         "sponsors": sponsors,
         "is_admin": session.get("admin_authed", False),
+        "current_admin_role": _current_admin_role(),
+        "current_admin_label": _current_admin_label(),
+        "admin_is_super": _admin_is_super(),
         "prereg_allowed": prereg_allowed,
         "sponsorship_allowed": sponsorship_allowed,
         "registered_cars": registered_cars,
@@ -2668,7 +2765,7 @@ def admin_version():
 
 @app.get("/admin")
 def admin_page():
-    show = get_active_show()
+    show = _admin_current_show() if session.get("admin_authed") else get_active_show()
     next_url = request.args.get("next", "")
     registered_cars = count_registered_cars(int(show["id"])) if show else 0
 
@@ -2681,20 +2778,23 @@ def admin_page():
             registered_cars=registered_cars,
         )
 
+    visible_shows = _admin_visible_shows()
     return render_template(
         "admin.html",
         show=show,
         authed=True,
         next=next_url,
         registered_cars=registered_cars,
+        visible_shows=visible_shows,
     )
 
 @app.get("/admin/car-search")
 @require_admin
 def admin_car_search():
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
 
     q = request.args.get("q", "").strip()
     results = search_show_cars_admin(int(show["id"]), q)
@@ -2709,9 +2809,10 @@ def admin_car_search():
 @app.get("/admin/registration/<int:show_car_id>/edit")
 @require_admin
 def admin_registration_edit(show_car_id: int):
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
 
     car = get_show_car_admin_by_id(int(show["id"]), int(show_car_id))
     if not car:
@@ -2899,9 +3000,10 @@ def admin_debug_registration_slots():
 @app.get("/admin/command-center")
 @require_admin
 def admin_command_center():
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
 
     q = request.args.get("q", "").strip()
     search_results = search_show_cars_admin(int(show["id"]), q) if q else []
@@ -2925,13 +3027,35 @@ def admin_command_center():
 @app.post("/admin/login")
 @rate_limit("admin_login", 10, 900)
 def admin_login():
+    email = request.form.get("email", "").strip().lower()
     pw = request.form.get("password", "")
     next_url = request.form.get("next", "") or url_for("admin_page")
     show = get_active_show()
+
+    # New user-based login. If email is supplied, authenticate against admin_users.
+    if email:
+        user = get_admin_user_by_email(email)
+        if user and int(user["is_active"] or 0) == 1 and check_password_hash(user["password_hash"], pw or ""):
+            session["admin_authed"] = True
+            session["admin_user_id"] = int(user["id"])
+            session["admin_email"] = user["email"]
+            session["admin_name"] = user["name"]
+            session["admin_role"] = (user["global_role"] or "show_owner").strip().lower()
+            _log_event("admin.user_login_success", int(show["id"]) if show else None, {"email": email, "next": next_url}, actor_type="admin")
+            return redirect(next_url)
+        _log_event("admin.user_login_failed", int(show["id"]) if show else None, {"email": email, "next": next_url}, actor_type="admin")
+        return render_template("admin.html", show=show, authed=False, login_error="Incorrect email or password.", next=next_url)
+
+    # Legacy super-admin fallback. Keeps existing Railway ADMIN_PASSWORD/ADMIN_PASSWORD_HASH working.
     if _check_admin_password(pw):
         session["admin_authed"] = True
-        _log_event("admin.login_success", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
+        session["admin_user_id"] = None
+        session["admin_email"] = ""
+        session["admin_name"] = "Legacy Super Admin"
+        session["admin_role"] = "super_admin"
+        _log_event("admin.legacy_login_success", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
         return redirect(next_url)
+
     _log_event("admin.login_failed", int(show["id"]) if show else None, {"next": next_url}, actor_type="admin")
     return render_template("admin.html", show=show, authed=False, login_error="Incorrect password.", next=next_url)
 
@@ -2940,7 +3064,8 @@ def admin_login():
 @require_admin
 def admin_logout():
     show = get_active_show()
-    session.pop("admin_authed", None)
+    for key in ["admin_authed", "admin_user_id", "admin_email", "admin_name", "admin_role"]:
+        session.pop(key, None)
     _log_event("admin.logout", int(show["id"]) if show else None, actor_type="admin")
     return redirect(url_for("admin_page"))
 
@@ -3074,7 +3199,7 @@ def admin_show_settings():
 @app.get("/admin/shows")
 @require_admin
 def admin_shows():
-    shows = list_shows_admin()
+    shows = _admin_visible_shows()
 
     def _status(row):
         return str(row["status"] or "draft").strip().lower()
@@ -3091,15 +3216,17 @@ def admin_shows():
         upcoming_shows=upcoming_shows,
         draft_shows=draft_shows,
         archived_shows=archived_shows,
-        show=get_active_show(),
-        saved_exports=_list_saved_exports(),
-        pending_vote_reviews=list_pending_vote_reviews(),
+        show=_admin_current_show(),
+        saved_exports=_list_saved_exports() if _admin_is_super() else [],
+        pending_vote_reviews=list_pending_vote_reviews() if _admin_is_super() else [],
+        can_create_shows=_admin_is_super(),
     )
 
 
 @app.get("/admin/shows/<int:show_id>")
 @require_admin
 def admin_show_detail(show_id: int):
+    _require_show_access(show_id)
     show_detail = get_show_by_id(show_id)
     if not show_detail:
         abort(404)
@@ -3136,6 +3263,7 @@ def _read_uploaded_csv_rows(file_storage) -> list[dict[str, Any]]:
 @app.get("/admin/shows/<int:show_id>/import")
 @require_admin
 def admin_show_import(show_id: int):
+    _require_show_access(show_id)
     show_detail = get_show_by_id(show_id)
     if not show_detail:
         abort(404)
@@ -3145,6 +3273,7 @@ def admin_show_import(show_id: int):
 @app.post("/admin/shows/<int:show_id>/import")
 @require_admin
 def admin_show_import_post(show_id: int):
+    _require_show_access(show_id)
     show_detail = get_show_by_id(show_id)
     if not show_detail:
         abort(404)
@@ -3173,7 +3302,7 @@ def admin_show_import_post(show_id: int):
 
 
 @app.post("/admin/shows/create")
-@require_admin
+@require_super_admin
 def admin_shows_create():
     max_cars_raw = request.form.get("max_cars", "").strip()
     max_cars = int(max_cars_raw) if max_cars_raw.isdigit() and int(max_cars_raw) > 0 else None
@@ -3283,6 +3412,7 @@ def admin_shows_create():
 @app.post("/admin/shows/<int:show_id>/update")
 @require_admin
 def admin_shows_update(show_id: int):
+    _require_show_access(show_id)
     try:
         sort_order = int(request.form.get("sort_order", "100") or "100")
     except ValueError:
@@ -3378,7 +3508,7 @@ def admin_shows_update(show_id: int):
 
 
 @app.post("/admin/shows/<int:show_id>/set-active")
-@require_admin
+@require_super_admin
 def admin_shows_set_active(show_id: int):
     set_active_show(show_id)
     _log_event("admin.show_set_active", show_id, actor_type="admin")
@@ -3387,7 +3517,7 @@ def admin_shows_set_active(show_id: int):
 
 
 @app.post("/admin/shows/<int:show_id>/set-upcoming")
-@require_admin
+@require_super_admin
 def admin_shows_set_upcoming(show_id: int):
     set_upcoming_show(show_id)
     _log_event("admin.show_set_upcoming", show_id, actor_type="admin")
@@ -3396,7 +3526,7 @@ def admin_shows_set_upcoming(show_id: int):
 
 
 @app.post("/admin/shows/<int:show_id>/set-past")
-@require_admin
+@require_super_admin
 def admin_shows_set_past(show_id: int):
     set_past_show(show_id)
     try:
@@ -3410,7 +3540,7 @@ def admin_shows_set_past(show_id: int):
 
 
 @app.post("/admin/shows/<int:show_id>/archive")
-@require_admin
+@require_super_admin
 def admin_shows_archive(show_id: int):
     archive_show(show_id)
     try:
@@ -3735,6 +3865,7 @@ def admin_export_snapshot_zip():
 @app.get("/admin/shows/<int:show_id>/export.zip")
 @require_admin
 def admin_export_show_zip(show_id: int):
+    _require_show_access(show_id)
     show = get_show_by_id(show_id)
     if not show:
         return "Show not found.", 404
@@ -3831,8 +3962,14 @@ def admin_leads():
     show_id_raw = request.args.get("show_id", "").strip()
     selected_show_id = int(show_id_raw) if show_id_raw.isdigit() else None
 
+    shows = _admin_visible_shows()
+    allowed_ids = [int(s["id"]) for s in shows]
+    if selected_show_id and not _admin_can_access_show(selected_show_id):
+        abort(403, "You do not have access to this show.")
+    if not _admin_is_super() and not selected_show_id and allowed_ids:
+        # Scoped users see leads for their first accessible show by default.
+        selected_show_id = allowed_ids[0]
     leads = list_event_interest_signups(selected_show_id)
-    shows = list_shows_admin()
 
     return render_template(
         "admin_leads.html",
@@ -3981,18 +4118,20 @@ def admin_export_votes():
 @app.get("/admin/placeholders")
 @require_admin
 def admin_placeholders():
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
     return render_template("admin_placeholders.html", show=show, cars=list_show_cars_public(int(show["id"])))
 
 
 @app.post("/admin/placeholders/create")
 @require_admin
 def admin_placeholders_create():
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
     start_raw = request.form.get("start_number", "1").strip()
     count_raw = request.form.get("count", "50").strip()
     try:
@@ -4018,9 +4157,10 @@ def admin_placeholders_create():
 @app.post("/admin/placeholders/fill-to-max")
 @require_admin
 def admin_placeholders_fill_to_max():
-    show = get_active_show()
+    show = _admin_current_show()
     if not show:
-        return "No active show.", 500
+        return "No accessible show.", 403
+    _require_show_access(int(show["id"]))
     try:
         created = ensure_placeholder_cards_up_to_max(int(show["id"]))
         _log_event("admin.placeholders_filled_to_max", int(show["id"]), {"created": created}, actor_type="admin")
@@ -4104,6 +4244,74 @@ def stripe_webhook():
     except Exception as e:
         return f"Webhook processing error: {e}", 500
 
+
+
+@app.route("/admin/users", methods=["GET", "POST"])
+@require_super_admin
+def admin_users():
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip().lower()
+
+        if action == "create_user":
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            password = request.form.get("password", "")
+            global_role = request.form.get("global_role", "show_owner").strip().lower()
+            show_id_raw = request.form.get("show_id", "").strip()
+            show_role = request.form.get("show_role", "show_owner").strip().lower()
+
+            if not name or not email or not password:
+                flash("Name, email, and password are required.", "error")
+                return redirect(url_for("admin_users"))
+
+            try:
+                admin_user_id = create_admin_user(
+                    name=name,
+                    email=email,
+                    password_hash=generate_password_hash(password),
+                    global_role=global_role,
+                    is_active=1,
+                )
+                if show_id_raw.isdigit() and global_role != "super_admin":
+                    assign_admin_user_show_role(admin_user_id, int(show_id_raw), show_role)
+                flash("Admin user created.", "ok")
+            except Exception as e:
+                flash(f"Could not create user: {e}", "error")
+
+        elif action == "assign_role":
+            admin_user_id_raw = request.form.get("admin_user_id", "").strip()
+            show_id_raw = request.form.get("show_id", "").strip()
+            role = request.form.get("role", "show_owner").strip().lower()
+            if admin_user_id_raw.isdigit() and show_id_raw.isdigit():
+                assign_admin_user_show_role(int(admin_user_id_raw), int(show_id_raw), role)
+                flash("Show role assigned.", "ok")
+            else:
+                flash("Choose a user and a show.", "error")
+
+        elif action == "deactivate_user":
+            admin_user_id_raw = request.form.get("admin_user_id", "").strip()
+            if admin_user_id_raw.isdigit():
+                set_admin_user_active(int(admin_user_id_raw), 0)
+                flash("Admin user deactivated.", "ok")
+
+        elif action == "activate_user":
+            admin_user_id_raw = request.form.get("admin_user_id", "").strip()
+            if admin_user_id_raw.isdigit():
+                set_admin_user_active(int(admin_user_id_raw), 1)
+                flash("Admin user activated.", "ok")
+
+        return redirect(url_for("admin_users"))
+
+    users = list_admin_users()
+    shows = list_shows_admin()
+    roles = list_admin_user_show_roles()
+    return render_template(
+        "admin_users.html",
+        show=_admin_current_show(),
+        users=users,
+        shows=shows,
+        roles=roles,
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))

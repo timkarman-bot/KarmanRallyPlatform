@@ -634,6 +634,47 @@ def init_db() -> None:
         """
     )
 
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            global_role TEXT NOT NULL DEFAULT 'show_owner',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_user_show_roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_user_id INTEGER NOT NULL,
+            show_id INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT 'show_owner',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(admin_user_id, show_id, role),
+            FOREIGN KEY(admin_user_id) REFERENCES admin_users(id),
+            FOREIGN KEY(show_id) REFERENCES shows(id)
+        )
+        """
+    )
+
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users(email)",
+        "CREATE INDEX IF NOT EXISTS idx_admin_users_active ON admin_users(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_admin_user_show_roles_user ON admin_user_show_roles(admin_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_admin_user_show_roles_show ON admin_user_show_roles(show_id)",
+    ]:
+        cur.execute(sql)
+
     row = cur.execute("SELECT id FROM waiver_templates WHERE is_default = 1 LIMIT 1").fetchone()
     if not row:
         cur.execute(
@@ -4160,3 +4201,201 @@ def import_registered_cars_for_show(show_id: int, rows: List[Dict[str, Any]], *,
         raise
     finally:
         conn.close()
+
+
+# ADMIN USERS / SHOW ACCESS
+
+def get_admin_user_by_email(email: str) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT * FROM admin_users WHERE lower(email) = lower(?) LIMIT 1",
+        ((email or "").strip(),),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_admin_user_by_id(admin_user_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT * FROM admin_users WHERE id = ? LIMIT 1",
+        (int(admin_user_id),),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def create_admin_user(
+    *,
+    name: str,
+    email: str,
+    password_hash: str,
+    global_role: str = "show_owner",
+    is_active: int = 1,
+) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    role = (global_role or "show_owner").strip().lower()
+    if role not in {"super_admin", "show_owner", "registrar", "judge", "volunteer"}:
+        role = "show_owner"
+    cur.execute(
+        """
+        INSERT INTO admin_users (name, email, password_hash, global_role, is_active, updated_at)
+        VALUES (?, lower(?), ?, ?, ?, datetime('now'))
+        """,
+        ((name or "").strip(), (email or "").strip(), password_hash or "", role, 1 if int(is_active or 0) else 0),
+    )
+    conn.commit()
+    rid = int(cur.lastrowid)
+    conn.close()
+    return rid
+
+
+def list_admin_users() -> List[sqlite3.Row]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM admin_users
+        ORDER BY is_active DESC, global_role ASC, name ASC, email ASC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def set_admin_user_active(admin_user_id: int, is_active: int) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE admin_users SET is_active = ?, updated_at = datetime('now') WHERE id = ?",
+        (1 if int(is_active or 0) else 0, int(admin_user_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def assign_admin_user_show_role(admin_user_id: int, show_id: int, role: str) -> None:
+    role = (role or "show_owner").strip().lower()
+    if role not in {"show_owner", "registrar", "judge", "volunteer"}:
+        role = "show_owner"
+    conn = _conn()
+    conn.execute(
+        """
+        INSERT INTO admin_user_show_roles (admin_user_id, show_id, role, is_active, updated_at)
+        VALUES (?, ?, ?, 1, datetime('now'))
+        ON CONFLICT(admin_user_id, show_id, role)
+        DO UPDATE SET is_active = 1, updated_at = datetime('now')
+        """,
+        (int(admin_user_id), int(show_id), role),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_admin_user_show_role(admin_user_id: int, show_id: int, role: str) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE admin_user_show_roles
+        SET is_active = 0, updated_at = datetime('now')
+        WHERE admin_user_id = ? AND show_id = ? AND role = ?
+        """,
+        (int(admin_user_id), int(show_id), (role or "").strip().lower()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_admin_user_show_roles(admin_user_id: Optional[int] = None) -> List[sqlite3.Row]:
+    conn = _conn()
+    if admin_user_id:
+        rows = conn.execute(
+            """
+            SELECT r.*, s.title AS show_title, s.slug AS show_slug, u.name AS user_name, u.email AS user_email
+            FROM admin_user_show_roles r
+            JOIN shows s ON s.id = r.show_id
+            JOIN admin_users u ON u.id = r.admin_user_id
+            WHERE r.admin_user_id = ? AND r.is_active = 1
+            ORDER BY s.title ASC, r.role ASC
+            """,
+            (int(admin_user_id),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT r.*, s.title AS show_title, s.slug AS show_slug, u.name AS user_name, u.email AS user_email
+            FROM admin_user_show_roles r
+            JOIN shows s ON s.id = r.show_id
+            JOIN admin_users u ON u.id = r.admin_user_id
+            WHERE r.is_active = 1
+            ORDER BY u.name ASC, s.title ASC, r.role ASC
+            """
+        ).fetchall()
+    conn.close()
+    return rows
+
+
+def admin_user_can_access_show(admin_user_id: int, show_id: int) -> bool:
+    user = get_admin_user_by_id(int(admin_user_id))
+    if not user or int(user["is_active"] or 0) != 1:
+        return False
+    if (user["global_role"] or "").strip().lower() == "super_admin":
+        return True
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT id
+        FROM admin_user_show_roles
+        WHERE admin_user_id = ? AND show_id = ? AND is_active = 1
+        LIMIT 1
+        """,
+        (int(admin_user_id), int(show_id)),
+    ).fetchone()
+    conn.close()
+    return bool(row)
+
+
+def list_show_ids_for_admin_user(admin_user_id: int) -> List[int]:
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT DISTINCT show_id
+        FROM admin_user_show_roles
+        WHERE admin_user_id = ? AND is_active = 1
+        ORDER BY show_id ASC
+        """,
+        (int(admin_user_id),),
+    ).fetchall()
+    conn.close()
+    return [int(r["show_id"]) for r in rows]
+
+
+def list_shows_admin_for_user(admin_user_id: Optional[int], is_super_admin: bool = False) -> List[sqlite3.Row]:
+    if is_super_admin or not admin_user_id:
+        return list_shows_admin()
+    show_ids = list_show_ids_for_admin_user(int(admin_user_id))
+    if not show_ids:
+        return []
+    placeholders = ",".join(["?"] * len(show_ids))
+    conn = _conn()
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM shows
+        WHERE id IN ({placeholders})
+        ORDER BY
+            CASE status
+                WHEN 'active' THEN 0
+                WHEN 'upcoming' THEN 1
+                WHEN 'draft' THEN 2
+                WHEN 'past' THEN 3
+                ELSE 4
+            END,
+            sort_order ASC,
+            date ASC,
+            id DESC
+        """,
+        tuple(show_ids),
+    ).fetchall()
+    conn.close()
+    return rows

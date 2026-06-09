@@ -13,6 +13,11 @@
       <form method="POST" action="{{ url_for('admin_login') }}" class="mt-6 space-y-4">
         <input type="hidden" name="next" value="{{ next }}">
         <div>
+          <label class="text-sm font-semibold">Email <span class="text-slate-400">(optional for legacy super-admin)</span></label>
+          <input type="email" name="email" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="user@example.com">
+          <div class="mt-1 text-xs text-slate-500">Leave blank to use the legacy Railway admin password.</div>
+        </div>
+        <div>
           <label class="text-sm font-semibold">Password</label>
           <input type="password" name="password" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3">
         </div>
@@ -24,6 +29,10 @@
       <div>
         <div class="text-xs font-semibold text-slate-500">ADMIN</div>
         <h1 class="mt-1 text-3xl font-semibold tracking-tight">{{ show["title"] if show else "No Active Show" }}</h1>
+        <div class="mt-2 text-sm text-slate-600">
+          Logged in as <span class="font-semibold text-slate-900">{{ current_admin_label }}</span>
+          <span class="text-slate-400">({{ current_admin_role or "admin" }})</span>
+        </div>
         {% if show %}
           <div class="mt-2 text-sm text-slate-600">
             Registered cars:
@@ -36,6 +45,9 @@
       <a class="btn btn-primary" href="{{ url_for('admin_command_center') }}">Command Center</a>
       <a class="btn btn-outline" href="{{ url_for('admin_car_search') }}">Search Cars / Owners</a>
       <a class="btn btn-outline" href="{{ url_for('admin_shows') }}">Manage Shows</a>
+      {% if admin_is_super %}
+        <a class="btn btn-outline" href="{{ url_for('admin_users') }}">Admin Users</a>
+      {% endif %}
       <a class="btn btn-outline" href="{{ url_for('sponsorship.admin_sponsors') }}">Sponsors</a>
     <form method="POST" action="{{ url_for('admin_logout') }}">
     <button class="btn btn-outline">Logout</button>
@@ -52,6 +64,17 @@
         </div>
       {% endif %}
     {% endwith %}
+
+    {% if visible_shows %}
+      <div class="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+        <div class="text-xs font-semibold text-blue-700">ACCESSIBLE SHOWS</div>
+        <div class="mt-2 flex flex-wrap gap-2">
+          {% for s in visible_shows %}
+            <a class="rounded-2xl bg-white border border-blue-100 px-4 py-2 text-sm font-semibold text-blue-900 hover:bg-blue-50" href="{{ url_for('admin_show_detail', show_id=s['id']) }}">{{ s['title'] }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
 
     <div class="mt-6 grid gap-6 lg:grid-cols-3">
       <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
