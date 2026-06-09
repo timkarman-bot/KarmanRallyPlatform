@@ -34,7 +34,9 @@
         <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('home') }}">Home</a>
         {% if active_show %}
           <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('show_page', slug=active_show['slug']) }}">Current Show</a>
-          <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('register_page_for_show', show_slug=active_show['slug']) }}">Register</a>
+        {% endif %}
+        <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('register_page') }}">Register</a>
+        {% if active_show %}
           <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('attendee_page', show_slug=active_show['slug']) }}">Attendee QR</a>
           {% if sponsorship_allowed(active_show) %}
             <a class="px-3 py-2 rounded-xl hover:bg-slate-100" href="{{ url_for('sponsorship.public_sponsorship_page', show_slug=active_show['slug']) }}">Sponsor</a>

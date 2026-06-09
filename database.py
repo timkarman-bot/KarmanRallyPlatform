@@ -859,6 +859,35 @@ def list_shows_admin() -> List[sqlite3.Row]:
     return rows
 
 
+def list_public_registerable_shows() -> List[sqlite3.Row]:
+    """Public show list for /register picker.
+
+    Includes active and upcoming shows that are visible on the site. This allows
+    the platform to support several simultaneous shows where some are in day-of
+    mode and others are still accepting preregistration.
+    """
+    conn = _conn()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM shows
+        WHERE show_on_site = 1
+          AND COALESCE(status, 'draft') IN ('active', 'upcoming')
+        ORDER BY
+            CASE COALESCE(status, 'draft')
+                WHEN 'active' THEN 0
+                WHEN 'upcoming' THEN 1
+                ELSE 2
+            END,
+            sort_order ASC,
+            date ASC,
+            id DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 def get_next_upcoming_show() -> Optional[sqlite3.Row]:
     conn = _conn()
     row = conn.execute(

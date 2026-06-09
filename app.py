@@ -93,6 +93,7 @@ from database import (
     list_event_interest_signups,
     create_event_interest_signup,
     list_shows_admin,
+    list_public_registerable_shows,
     get_next_upcoming_show,
     create_show_admin,
     update_show_admin_record,
@@ -246,9 +247,10 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.8.3-beta"
+APP_VERSION = "0.8.1-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Show Management / Claimable Placeholder Beta"
+APP_RELEASE_NAME = "Multi-Show Registration Picker Beta"
+
 
 def prereg_allowed(show) -> bool:
     if not show:
@@ -1327,10 +1329,15 @@ def _registration_show_or_response(show_slug: Optional[str] = None):
 
 @app.get("/register")
 def register_page():
-    show, response = _registration_show_or_response(None)
-    if response:
-        return response
-    return render_template("register.html", show=show, registration_slots=_registration_slots_for_public(int(show["id"])))
+    """Public registration picker.
+
+    When more than one show is active/upcoming, the top navigation Register button
+    should not send visitors straight into whichever show is marked active. This
+    page lets the visitor pick the correct event without scrolling through all
+    show details.
+    """
+    shows = list_public_registerable_shows()
+    return render_template("register_picker.html", shows=shows)
 
 
 @app.get("/register/<show_slug>")
@@ -2578,6 +2585,7 @@ def admin_version():
         "release_stage": APP_RELEASE_STAGE,
         "release_name": APP_RELEASE_NAME,
     })
+
 
 @app.get("/admin")
 def admin_page():
