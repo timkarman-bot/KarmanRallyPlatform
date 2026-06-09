@@ -7,7 +7,7 @@
       <div>
         <div class="text-xs font-semibold tracking-wide text-slate-500">IMPORT CENTER</div>
         <h1 class="mt-1 text-3xl font-semibold">{{ show_detail['title'] }}</h1>
-        <p class="mt-2 text-slate-600">Use this when registrations or judging classes were collected outside this platform, such as a spreadsheet or Google Forms export.</p>
+        <p class="mt-2 text-slate-600">Use this when registrations or judging classes were collected outside this platform, such as a spreadsheet, Google Forms export, club registration file, or show committee list.</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <a class="btn btn-outline" href="{{ url_for('admin_show_detail', show_id=show_detail['id']) }}">Back to Show</a>
@@ -16,9 +16,31 @@
     </div>
   </div>
 
+  <section class="rounded-3xl border border-blue-100 bg-blue-50 p-6">
+    <h2 class="text-xl font-semibold text-slate-900">CSV Setup Instructions</h2>
+    <p class="mt-2 text-sm text-blue-950">The import is strict enough to protect the data, but flexible enough to accept common spreadsheet headers. Use the preferred headers when possible. Extra custom columns are allowed and ignored for now, so outside spreadsheets do not need to be stripped down.</p>
+    <div class="mt-4 grid gap-4 md:grid-cols-2">
+      <div class="rounded-2xl bg-white border border-blue-100 p-4">
+        <div class="font-semibold">Judging Classes CSV</div>
+        <div class="mt-2 text-xs text-slate-500">Preferred header row:</div>
+        <pre class="mt-2 overflow-x-auto rounded-xl bg-slate-900 text-white p-3 text-xs">class_code,class_name,description,year_min,year_max,make_contains,model_contains,keyword_contains,award_places,sort_order,is_active</pre>
+        <div class="mt-3 text-xs text-slate-600">Accepted aliases include: code, class, class name, judging class, min year, max year, make, model, keyword, awards, places, active.</div>
+      </div>
+      <div class="rounded-2xl bg-white border border-blue-100 p-4">
+        <div class="font-semibold">Accepted Registrations CSV</div>
+        <div class="mt-2 text-xs text-slate-500">Preferred header row:</div>
+        <pre class="mt-2 overflow-x-auto rounded-xl bg-slate-900 text-white p-3 text-xs">car_number,owner_name,phone,email,year,make,model,class_code,class_name,payment_status,waiver_received,custom_1,custom_2</pre>
+        <div class="mt-3 text-xs text-slate-600">Accepted aliases include: name, full name, owner, mobile, cell, email address, vehicle year, vehicle make, vehicle model, car #, entry number, class, division, judging class.</div>
+      </div>
+    </div>
+    <div class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+      <strong>Important:</strong> Registration imports will create missing judging classes when a row includes <code>class_code</code>, <code>class_name</code>, <code>class</code>, <code>division</code>, or <code>judging_class</code> that does not already exist for this show.
+    </div>
+  </section>
+
   <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <h2 class="text-xl font-semibold">Import Judging Classes</h2>
-    <p class="mt-1 text-sm text-slate-600">CSV columns accepted: class_code, class_name, description, year_min, year_max, make_contains, model_contains, award_places, sort_order, is_active.</p>
+    <p class="mt-1 text-sm text-slate-600">Use this first when you have a class list. Existing classes with the same class code or class name are updated.</p>
     <form method="POST" action="{{ url_for('admin_show_import_post', show_id=show_detail['id']) }}" enctype="multipart/form-data" class="mt-4 space-y-4">
       <input type="hidden" name="import_type" value="classes">
       <input type="file" name="import_file" accept=".csv" required>
@@ -28,7 +50,7 @@
 
   <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <h2 class="text-xl font-semibold">Import Accepted Car Registrations</h2>
-    <p class="mt-1 text-sm text-slate-600">CSV columns accepted: car_number, owner_name, phone, email, year, make, model, class_code/class_name, payment_status, waiver_received. If car_number is blank, the next available open placeholder card is used.</p>
+    <p class="mt-1 text-sm text-slate-600">Use this for cars already accepted outside the platform. If car number is blank, the next open placeholder card is used; if none exists, the next available number is used.</p>
     <div class="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Imported registrations are assumed already accepted through the outside system. They will not be sent to online checkout.</div>
     <form method="POST" action="{{ url_for('admin_show_import_post', show_id=show_detail['id']) }}" enctype="multipart/form-data" class="mt-4 space-y-4">
       <input type="hidden" name="import_type" value="registrations">
@@ -39,8 +61,8 @@
   </section>
 
   <section class="rounded-3xl bg-slate-50 border border-slate-200 p-6">
-    <h2 class="text-lg font-semibold">Google Forms</h2>
-    <p class="mt-1 text-sm text-slate-600">In Google Forms/Sheets, use File → Download → Comma Separated Values (.csv), then upload here.</p>
+    <h2 class="text-lg font-semibold">Google Forms / Spreadsheet Export</h2>
+    <p class="mt-1 text-sm text-slate-600">In Google Forms or Google Sheets, use <strong>File → Download → Comma Separated Values (.csv)</strong>, then upload here. You may leave one or two extra custom columns in the file; they will be ignored unless mapped in a future release.</p>
   </section>
 </div>
 {% endblock %}
