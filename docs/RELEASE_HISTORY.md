@@ -69,6 +69,12 @@ Date: 2026-06-09
 - Simplified import setup so users rely on the system-generated templates.
 
 
+## 0.9.2-beta v7 - Contact Email Timeout Control
+- Added `EMAIL_ENABLED=false` support so contact messages continue saving without waiting on SMTP.
+- Reduced SMTP timeout from 30 seconds to a configurable `MAIL_TIMEOUT` default of 5 seconds.
+- Added SMTP mode logging showing host, port, SSL/TLS mode, and timeout without exposing credentials.
+- Contact Us remains database-first: platform retention still works even when email is disabled or SMTP fails.
+
 ## 0.9.2-beta v6 — Contact Message Center and NWRA Email
 
 Date: 2026-06-15

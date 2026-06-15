@@ -1245,18 +1245,36 @@ def _save_sponsor_logo_upload(file_storage) -> str:
     file_storage.save(out_path)
     return f"img/sponsors/uploads/{final_name}"
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[bool, str]:
     """Send a system notification email.
 
-    Supports both the newer MAIL_* Railway variables and the older SMTP_* variables.
-    For Northwest Registered Agent / Business Identity email, use SSL on port 465.
+    The contact form always saves the message first. Email is only a notification layer.
+    Set EMAIL_ENABLED=false in Railway to skip SMTP entirely while still saving messages.
     """
+    if not _env_bool("EMAIL_ENABLED", True):
+        msg = "Email notifications are disabled by EMAIL_ENABLED=false."
+        app.logger.info("%s Subject=%s", msg, subject)
+        return False, msg
+
     smtp_host = (os.getenv("MAIL_SERVER", "").strip() or os.getenv("SMTP_HOST", "").strip())
     smtp_port_raw = (os.getenv("MAIL_PORT", "").strip() or os.getenv("SMTP_PORT", "587").strip() or "587")
     try:
         smtp_port = int(smtp_port_raw)
     except ValueError:
         smtp_port = 587
+
+    timeout_raw = os.getenv("MAIL_TIMEOUT", os.getenv("SMTP_TIMEOUT", "5")).strip()
+    try:
+        timeout = max(1, min(int(timeout_raw), 10))
+    except ValueError:
+        timeout = 5
 
     smtp_username = (os.getenv("MAIL_USERNAME", "").strip() or os.getenv("SMTP_USERNAME", "").strip())
     smtp_password = (os.getenv("MAIL_PASSWORD", "").strip() or os.getenv("SMTP_PASSWORD", "").strip())
@@ -1272,9 +1290,8 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
         or "info@karmankarshowsandevents.com"
     )
 
-    use_ssl = os.getenv("MAIL_USE_SSL", os.getenv("SMTP_USE_SSL", "")).strip().lower() in {"1", "true", "yes", "on"}
-    tls_raw = os.getenv("MAIL_USE_TLS", os.getenv("SMTP_USE_TLS", "1" if not use_ssl else "0")).strip().lower()
-    use_tls = tls_raw in {"1", "true", "yes", "on"}
+    use_ssl = _env_bool("MAIL_USE_SSL", _env_bool("SMTP_USE_SSL", False))
+    use_tls = _env_bool("MAIL_USE_TLS", _env_bool("SMTP_USE_TLS", not use_ssl))
 
     if not smtp_host or not smtp_username or not smtp_password:
         msg = "SMTP is not configured; email was not sent."
@@ -1290,12 +1307,13 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
     email_msg.set_content(body)
 
     try:
+        app.logger.info("Sending system email via %s:%s ssl=%s tls=%s timeout=%ss", smtp_host, smtp_port, use_ssl, use_tls, timeout)
         if use_ssl:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as server:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=timeout) as server:
                 server.login(smtp_username, smtp_password)
                 server.send_message(email_msg)
         else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
                 if use_tls:
                     server.starttls()
                 server.login(smtp_username, smtp_password)
