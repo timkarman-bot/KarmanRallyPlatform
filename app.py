@@ -152,6 +152,13 @@ from database import (
     get_restricted_vote,
     upsert_restricted_vote,
     restricted_vote_progress,
+    create_contact_message,
+    mark_contact_message_email_result,
+    list_contact_messages,
+    get_contact_message,
+    mark_contact_message_read,
+    archive_contact_message,
+    count_new_contact_messages,
 )
 
 
@@ -273,7 +280,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 
 APP_VERSION = "0.9.2-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Paper Ballot and Import Workflow Beta"
+APP_RELEASE_NAME = "Contact Message Center and NWRA Email Beta"
 
 
 def prereg_allowed(show) -> bool:
@@ -1238,37 +1245,65 @@ def _save_sponsor_logo_upload(file_storage) -> str:
     file_storage.save(out_path)
     return f"img/sponsors/uploads/{final_name}"
 
-def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> bool:
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    smtp_port = int(os.getenv("SMTP_PORT", "587").strip() or "587")
-    smtp_username = os.getenv("SMTP_USERNAME", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    smtp_use_tls = os.getenv("SMTP_USE_TLS", "1").strip() != "0"
-    smtp_from = os.getenv("SMTP_FROM_EMAIL", "info@karmankarshowsandevents.com").strip()
-    target = "info@karmankarshowsandevents.com"
+def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[bool, str]:
+    """Send a system notification email.
+
+    Supports both the newer MAIL_* Railway variables and the older SMTP_* variables.
+    For Northwest Registered Agent / Business Identity email, use SSL on port 465.
+    """
+    smtp_host = (os.getenv("MAIL_SERVER", "").strip() or os.getenv("SMTP_HOST", "").strip())
+    smtp_port_raw = (os.getenv("MAIL_PORT", "").strip() or os.getenv("SMTP_PORT", "587").strip() or "587")
+    try:
+        smtp_port = int(smtp_port_raw)
+    except ValueError:
+        smtp_port = 587
+
+    smtp_username = (os.getenv("MAIL_USERNAME", "").strip() or os.getenv("SMTP_USERNAME", "").strip())
+    smtp_password = (os.getenv("MAIL_PASSWORD", "").strip() or os.getenv("SMTP_PASSWORD", "").strip())
+    smtp_from = (
+        os.getenv("MAIL_FROM", "").strip()
+        or os.getenv("SMTP_FROM_EMAIL", "").strip()
+        or smtp_username
+        or "info@karmankarshowsandevents.com"
+    )
+    target = (
+        os.getenv("CONTACT_EMAIL", "").strip()
+        or os.getenv("MAIL_TO", "").strip()
+        or "info@karmankarshowsandevents.com"
+    )
+
+    use_ssl = os.getenv("MAIL_USE_SSL", os.getenv("SMTP_USE_SSL", "")).strip().lower() in {"1", "true", "yes", "on"}
+    tls_raw = os.getenv("MAIL_USE_TLS", os.getenv("SMTP_USE_TLS", "1" if not use_ssl else "0")).strip().lower()
+    use_tls = tls_raw in {"1", "true", "yes", "on"}
 
     if not smtp_host or not smtp_username or not smtp_password:
-        app.logger.warning("SMTP not configured; email not sent. Subject=%s", subject)
-        return False
+        msg = "SMTP is not configured; email was not sent."
+        app.logger.warning("%s Subject=%s", msg, subject)
+        return False, msg
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = smtp_from
-    msg["To"] = target
+    email_msg = EmailMessage()
+    email_msg["Subject"] = subject
+    email_msg["From"] = smtp_from
+    email_msg["To"] = target
     if reply_to:
-        msg["Reply-To"] = reply_to
-    msg.set_content(body)
+        email_msg["Reply-To"] = reply_to
+    email_msg.set_content(body)
 
     try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            if smtp_use_tls:
-                server.starttls()
-            server.login(smtp_username, smtp_password)
-            server.send_message(msg)
-        return True
-    except Exception:
+        if use_ssl:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as server:
+                server.login(smtp_username, smtp_password)
+                server.send_message(email_msg)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+                if use_tls:
+                    server.starttls()
+                server.login(smtp_username, smtp_password)
+                server.send_message(email_msg)
+        return True, ""
+    except Exception as exc:
         app.logger.exception("Failed to send system email.")
-        return False
+        return False, str(exc)
 
 
 @app.context_processor
@@ -1334,23 +1369,41 @@ def contact_page():
 def contact_submit():
     name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip()
+    phone = request.form.get("phone", "").strip()
     subject = request.form.get("subject", "").strip()
     body = request.form.get("body", "").strip()
 
     if not (name and email and subject and body):
-        flash("Please complete all contact form fields.", "error")
+        flash("Please complete the required contact form fields.", "error")
         return redirect(url_for("contact_page"))
 
-    sent = _send_system_email(
-        subject=f"Customer Service: {subject}",
-        body=f"From: {name}\nEmail: {email}\n\n{body}",
-        reply_to=email,
+    message_id = create_contact_message(
+        name=name,
+        email=email,
+        phone=phone,
+        subject=subject,
+        message=body,
+        source_page=request.referrer or "contact",
     )
 
-    if sent:
-        flash("Your message has been sent.", "ok")
-    else:
-        flash("Your message was saved, but email delivery is not configured yet.", "error")
+    email_body = (
+        f"New Contact Us message received.\n\n"
+        f"Message ID: {message_id}\n"
+        f"Name: {name}\n"
+        f"Email: {email}\n"
+        f"Phone: {phone or 'Not provided'}\n"
+        f"Subject: {subject}\n\n"
+        f"Message:\n{body}\n\n"
+        f"View in admin: {_abs_url(url_for('admin_contact_messages'))}"
+    )
+    sent, error = _send_system_email(
+        subject=f"Karman Kar Contact: {subject}",
+        body=email_body,
+        reply_to=email,
+    )
+    mark_contact_message_email_result(message_id, sent=sent, error=error)
+
+    flash("Thank you. Your message has been received.", "ok")
     return redirect(url_for("contact_page"))
 
 
@@ -2942,6 +2995,35 @@ def sponsorship_checkout_success(sale_id: int):
     flash("Payment received. Stripe will send your receipt automatically.", "ok")
     return redirect(url_for("sponsorship.public_sponsorship_page", show_slug=show["slug"]))
 
+@app.get("/admin/contact-messages")
+@require_admin
+def admin_contact_messages():
+    status = request.args.get("status", "open").strip().lower()
+    q = request.args.get("q", "").strip()
+    messages = list_contact_messages(status=status, query=q, limit=250)
+    return render_template("admin_contact_messages.html", messages=messages, status=status, q=q)
+
+
+@app.post("/admin/contact-messages/<int:message_id>/read")
+@require_admin
+def admin_contact_message_mark_read(message_id: int):
+    if not get_contact_message(message_id):
+        abort(404)
+    mark_contact_message_read(message_id)
+    flash("Message marked as read.", "ok")
+    return redirect(request.referrer or url_for("admin_contact_messages"))
+
+
+@app.post("/admin/contact-messages/<int:message_id>/archive")
+@require_admin
+def admin_contact_message_archive(message_id: int):
+    if not get_contact_message(message_id):
+        abort(404)
+    archive_contact_message(message_id)
+    flash("Message archived.", "ok")
+    return redirect(request.referrer or url_for("admin_contact_messages"))
+
+
 @app.get("/admin/version")
 @require_admin
 def admin_version():
@@ -3331,6 +3413,7 @@ def admin_command_center():
         registered_paid=registered_paid,
         placeholders=placeholders,
         checked_in=checked_in,
+        new_contact_message_count=count_new_contact_messages(),
     )
     
 @app.post("/admin/login")

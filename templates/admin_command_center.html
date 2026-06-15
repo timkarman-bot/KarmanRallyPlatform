@@ -12,6 +12,7 @@
     <div class="flex flex-wrap gap-2">
       <a class="btn btn-outline" href="{{ url_for('admin_page') }}">Admin Home</a>
       <a class="btn btn-outline" href="{{ url_for('admin_car_search') }}">Search</a>
+      <a class="btn btn-outline" href="{{ url_for('admin_contact_messages') }}">Contact Messages{% if new_contact_message_count %} ({{ new_contact_message_count }}){% endif %}</a>
       <a class="btn btn-outline" href="{{ url_for('admin_placeholders') }}">Placeholders</a>
       <a class="btn btn-primary" href="{{ url_for('admin_print_cards_pdf') }}?all=1" target="_blank">Print All Cards</a>
     </div>
@@ -124,6 +125,7 @@
         <a class="btn btn-outline text-center" href="{{ url_for('admin_placeholders') }}">Manage Placeholder Cards</a>
         <a class="btn btn-outline text-center" href="{{ url_for('admin_print_cards_pdf') }}?all=1" target="_blank">Print Full Card Set</a>
         <a class="btn btn-outline text-center" href="{{ url_for('admin_car_search') }}">Search Owners / Car Numbers</a>
+        <a class="btn btn-outline text-center" href="{{ url_for('admin_contact_messages') }}">Read Contact Messages{% if new_contact_message_count %} ({{ new_contact_message_count }} new){% endif %}</a>
         <a class="btn btn-outline text-center" href="{{ url_for('admin_paper_ballots') }}">Enter Paper Ballot</a>
         <a class="btn btn-outline text-center" href="{{ url_for('admin_paper_ballots_print') }}" target="_blank">Print Paper Ballots</a>
         <a class="btn btn-outline text-center" href="{{ url_for('admin_paper_ballots_import_page') }}">Import Paper Votes CSV</a>

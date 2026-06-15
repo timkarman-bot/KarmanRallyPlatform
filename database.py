@@ -775,6 +775,41 @@ def init_db() -> None:
     ]:
         cur.execute(sql)
 
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contact_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            phone TEXT,
+            subject TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source_page TEXT,
+            status TEXT NOT NULL DEFAULT 'new',
+            email_sent INTEGER NOT NULL DEFAULT 0,
+            email_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            read_at TEXT,
+            archived_at TEXT
+        )
+        """
+    )
+
+    for sql in [
+        "ALTER TABLE contact_messages ADD COLUMN phone TEXT",
+        "ALTER TABLE contact_messages ADD COLUMN source_page TEXT",
+        "ALTER TABLE contact_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'new'",
+        "ALTER TABLE contact_messages ADD COLUMN email_sent INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE contact_messages ADD COLUMN email_error TEXT",
+        "ALTER TABLE contact_messages ADD COLUMN read_at TEXT",
+        "ALTER TABLE contact_messages ADD COLUMN archived_at TEXT",
+    ]:
+        try:
+            cur.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
     row = cur.execute("SELECT id FROM waiver_templates WHERE is_default = 1 LIMIT 1").fetchone()
     if not row:
         cur.execute(
@@ -806,6 +841,8 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket ON rate_limit_hits(bucket_key, window_started_at)",
         "CREATE INDEX IF NOT EXISTS idx_event_interest_show_id ON event_interest_signups(show_id)",
         "CREATE INDEX IF NOT EXISTS idx_event_interest_created_at ON event_interest_signups(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_contact_messages_status_created ON contact_messages(status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_contact_messages_created ON contact_messages(created_at)",
     ]:
         cur.execute(sql)
 
@@ -5099,3 +5136,133 @@ def list_shows_admin_for_user(admin_user_id: Optional[int], is_super_admin: bool
     ).fetchall()
     conn.close()
     return rows
+
+
+# CONTACT MESSAGES
+
+def create_contact_message(
+    *,
+    name: str,
+    email: str,
+    phone: str = "",
+    subject: str,
+    message: str,
+    source_page: str = "contact",
+) -> int:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO contact_messages (
+            name, email, phone, subject, message, source_page, status, email_sent, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'new', 0, datetime('now'))
+        """,
+        (
+            (name or "").strip(),
+            (email or "").strip(),
+            (phone or "").strip(),
+            (subject or "").strip(),
+            (message or "").strip(),
+            (source_page or "contact").strip(),
+        ),
+    )
+    message_id = int(cur.lastrowid)
+    conn.commit()
+    conn.close()
+    return message_id
+
+
+def mark_contact_message_email_result(message_id: int, *, sent: bool, error: str = "") -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE contact_messages
+        SET email_sent = ?, email_error = ?
+        WHERE id = ?
+        """,
+        (1 if sent else 0, (error or "")[:1000], int(message_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_contact_messages(status: str = "open", query: str = "", limit: int = 200) -> List[sqlite3.Row]:
+    status = (status or "open").strip().lower()
+    query = (query or "").strip()
+    params: List[Any] = []
+    where = []
+    if status == "archived":
+        where.append("archived_at IS NOT NULL")
+    elif status == "new":
+        where.append("archived_at IS NULL AND status = 'new'")
+    elif status == "read":
+        where.append("archived_at IS NULL AND status = 'read'")
+    else:
+        where.append("archived_at IS NULL")
+    if query:
+        like = f"%{query}%"
+        where.append("(name LIKE ? OR email LIKE ? OR phone LIKE ? OR subject LIKE ? OR message LIKE ?)")
+        params.extend([like, like, like, like, like])
+    params.append(int(limit))
+    conn = _conn()
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM contact_messages
+        WHERE {' AND '.join(where)}
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ?
+        """,
+        tuple(params),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_contact_message(message_id: int) -> Optional[sqlite3.Row]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM contact_messages WHERE id = ? LIMIT 1", (int(message_id),)).fetchone()
+    conn.close()
+    return row
+
+
+def mark_contact_message_read(message_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE contact_messages
+        SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
+        WHERE id = ?
+        """,
+        (int(message_id),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def archive_contact_message(message_id: int) -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE contact_messages
+        SET status = 'archived', archived_at = COALESCE(archived_at, datetime('now'))
+        WHERE id = ?
+        """,
+        (int(message_id),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def count_new_contact_messages() -> int:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM contact_messages
+        WHERE archived_at IS NULL AND status = 'new'
+        """
+    ).fetchone()
+    conn.close()
+    return int(row["c"] if row else 0)

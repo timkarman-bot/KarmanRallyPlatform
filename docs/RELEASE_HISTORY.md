@@ -67,3 +67,23 @@ Date: 2026-06-09
 - Kept the green downloadable template/mapping section.
 - Removed redundant blue CSV instruction block from the import page.
 - Simplified import setup so users rely on the system-generated templates.
+
+
+## 0.9.2-beta v6 — Contact Message Center and NWRA Email
+
+Date: 2026-06-15
+
+### Added
+- Contact Us submissions now save to the platform database in `contact_messages`.
+- Admin Contact Messages page for reading, searching, marking read, and archiving messages.
+- Email notification support using Railway environment variables for Northwest Registered Agent / Business Identity SMTP.
+- Command Center link and new-message count for Contact Messages.
+
+### Reliability
+- Contact messages are saved before email is attempted.
+- If SMTP/email fails, the message remains available in the platform admin area and the visitor still receives a successful submission message.
+
+### Deployment Notes
+- Add Railway variables: MAIL_SERVER, MAIL_PORT, MAIL_USE_SSL, MAIL_USE_TLS, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM, CONTACT_EMAIL.
+- Recommended NWRA settings: MAIL_SERVER=mailserver.businessidentity.llc, MAIL_PORT=465, MAIL_USE_SSL=true, MAIL_USE_TLS=false.
+- Run `python -m py_compile app.py database.py utils/print_cards.py`.

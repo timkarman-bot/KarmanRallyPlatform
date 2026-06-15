@@ -1,7 +1,0 @@
-Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/faec1aca-fe58-4d07-af2b-93fc6162f602/vol_zicesfxndi7tiwvh
-Starting Container
-[2026-06-09 17:20:01 +0000] [1] [INFO] Starting gunicorn 22.0.0
-[2026-06-09 17:20:01 +0000] [1] [INFO] Listening at: http://0.0.0.0:8080 (1)
-[2026-06-09 17:20:01 +0000] [1] [INFO] Using worker: sync
-[2026-06-09 17:20:01 +0000] [2] [INFO] Booting worker with pid: 2
-[2026-06-09 17:20:01 +0000] [3] [INFO] Booting worker with pid: 3

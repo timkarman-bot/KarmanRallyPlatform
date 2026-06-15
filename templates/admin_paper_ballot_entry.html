@@ -23,12 +23,6 @@
     <div class="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
       <div class="font-semibold">Ballot saved.</div>
       <div class="mt-1 text-sm">{{ result.accepted_count }} vote line{{ '' if result.accepted_count == 1 else 's' }} counted.</div>
-      {% if result.skipped %}
-        <div class="mt-3 font-semibold text-amber-900">Skipped because prior votes already existed:</div>
-        <ul class="mt-1 list-disc pl-5 text-sm text-amber-900">
-          {% for s in result.skipped %}<li>{{ s }}</li>{% endfor %}
-        </ul>
-      {% endif %}
     </div>
   {% endif %}
 
@@ -41,39 +35,6 @@
     </div>
   {% endif %}
 
-  <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-    <h2 class="text-xl font-semibold">Participant lookup</h2>
-    <p class="mt-1 text-sm text-slate-600">For phone-dead or incomplete QR voting, enter the participant's car number first. Votes already made by QR stay in place. Paper entry only fills missing class/place votes.</p>
-    <form method="GET" action="{{ url_for('admin_paper_ballots') }}" class="mt-4 flex flex-wrap gap-3 items-end">
-      <div>
-        <label class="text-sm font-semibold">Participant car #</label>
-        <input name="car_number" value="{{ participant_status.car_number if participant_status else '' }}" inputmode="numeric" pattern="[0-9]*" class="mt-1 w-40 rounded-2xl border border-slate-200 px-4 py-3" autocomplete="off">
-      </div>
-      <button class="btn btn-primary" type="submit">Load voting status</button>
-    </form>
-
-    {% if participant_status %}
-      {% if participant_status.error %}
-        <div class="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">{{ participant_status.error }}</div>
-      {% else %}
-        <div class="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-950">
-          <div class="font-semibold">Car #{{ participant_status.car_number }} voting status</div>
-          <div class="mt-1">Completed: {{ participant_status.completed_count }} of {{ participant_status.total_count }} class/place choices. Missing: {{ participant_status.missing_count }}.</div>
-          {% if participant_status.completed %}
-            <details class="mt-3">
-              <summary class="cursor-pointer font-semibold">Already voted / locked in</summary>
-              <ul class="mt-2 list-disc pl-5 space-y-1">
-                {% for item in participant_status.completed %}
-                  <li>{{ item.class_name }} — {{ item.placement }}{% if item.placement == 1 %}st{% elif item.placement == 2 %}nd{% else %}rd{% endif %}: Car #{{ item.car_number }}</li>
-                {% endfor %}
-              </ul>
-            </details>
-          {% endif %}
-        </div>
-      {% endif %}
-    {% endif %}
-  </section>
-
   {% if not classes %}
     <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
       <h2 class="text-xl font-semibold">No active voting classes</h2>
@@ -82,18 +43,14 @@
   {% else %}
   <form method="POST" action="{{ url_for('admin_paper_ballots_submit') }}" class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <input type="hidden" name="show_id" value="{{ show['id'] }}">
-    <div class="grid gap-4 md:grid-cols-3">
-      <div>
-        <label class="text-sm font-semibold">Participant car # <span class="text-slate-500">recommended</span></label>
-        <input name="participant_car_number" value="{{ participant_status.car_number if participant_status and not participant_status.error else '' }}" inputmode="numeric" pattern="[0-9]*" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Car number on ballot">
-      </div>
+    <div class="grid gap-4 md:grid-cols-2">
       <div>
         <label class="text-sm font-semibold">Ballot label / number <span class="text-slate-500">optional</span></label>
         <input name="ballot_label" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: Ballot 12">
       </div>
       <div>
         <label class="text-sm font-semibold">Notes <span class="text-slate-500">optional</span></label>
-        <input name="notes" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: phone died, paper completion">
+        <input name="notes" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="Example: hard to read, confirmed by staff">
       </div>
     </div>
 
@@ -114,17 +71,9 @@
               <div class="font-semibold text-slate-900">{{ c['class_name'] }}</div>
               {% if c['class_code'] %}<div class="text-xs text-slate-500">{{ c['class_code'] }}</div>{% endif %}
             </td>
-            {% for placement, field in [(1, 'first'), (2, 'second'), (3, 'third')] %}
-              {% set locked = false %}
-              {% if participant_status and participant_status.completed %}
-                {% for item in participant_status.completed %}
-                  {% if item.class_id == c['id'] and item.placement == placement %}{% set locked = true %}{% endif %}
-                {% endfor %}
-              {% endif %}
-              <td class="py-3 pr-4">
-                <input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_{{ field }}" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off" {% if locked %}disabled placeholder="voted"{% endif %}>
-              </td>
-            {% endfor %}
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_first" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_second" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
+            <td class="py-3 pr-4"><input inputmode="numeric" pattern="[0-9]*" name="class_{{ c['id'] }}_third" class="paper-entry w-28 rounded-xl border border-slate-200 px-3 py-2" autocomplete="off"></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -133,7 +82,7 @@
 
     <div class="mt-6 flex flex-wrap gap-3 items-center">
       <button class="btn btn-primary" type="submit">Count This Paper Ballot</button>
-      <span class="text-sm text-slate-500">Prior QR/electronic votes win. Leave blanks for anything not filled in.</span>
+      <span class="text-sm text-slate-500">Leave blanks for classes/places the voter did not fill in.</span>
     </div>
   </form>
   {% endif %}
@@ -142,9 +91,9 @@
     <h2 class="text-xl font-semibold">Recent paper ballots</h2>
     <div class="mt-4 overflow-x-auto">
       <table class="min-w-full text-sm">
-        <thead><tr class="text-left text-slate-500 border-b border-slate-200"><th class="py-2 pr-4">Time</th><th class="py-2 pr-4">Participant</th><th class="py-2 pr-4">Label</th><th class="py-2 pr-4">Source</th><th class="py-2 pr-4">Vote lines</th><th class="py-2 pr-4">Entered by</th></tr></thead>
+        <thead><tr class="text-left text-slate-500 border-b border-slate-200"><th class="py-2 pr-4">Time</th><th class="py-2 pr-4">Label</th><th class="py-2 pr-4">Source</th><th class="py-2 pr-4">Vote lines</th><th class="py-2 pr-4">Entered by</th></tr></thead>
         <tbody class="divide-y divide-slate-100">
-          {% for b in recent_ballots %}<tr><td class="py-2 pr-4">{{ b['created_at'] }}</td><td class="py-2 pr-4">{% if b['participant_car_number'] %}#{{ b['participant_car_number'] }}{% else %}—{% endif %}</td><td class="py-2 pr-4">{{ b['ballot_label'] or b['ballot_token'] }}</td><td class="py-2 pr-4">{{ b['source'] }}</td><td class="py-2 pr-4">{{ b['vote_lines'] }}</td><td class="py-2 pr-4">{{ b['entered_by'] or '—' }}</td></tr>{% else %}<tr><td colspan="6" class="py-4 text-slate-500">No paper ballots entered yet.</td></tr>{% endfor %}
+          {% for b in recent_ballots %}<tr><td class="py-2 pr-4">{{ b['created_at'] }}</td><td class="py-2 pr-4">{{ b['ballot_label'] or b['ballot_token'] }}</td><td class="py-2 pr-4">{{ b['source'] }}</td><td class="py-2 pr-4">{{ b['vote_lines'] }}</td><td class="py-2 pr-4">{{ b['entered_by'] or '—' }}</td></tr>{% else %}<tr><td colspan="5" class="py-4 text-slate-500">No paper ballots entered yet.</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>
@@ -153,7 +102,7 @@
 
 <script>
 (function(){
-  const inputs = Array.from(document.querySelectorAll('.paper-entry:not([disabled])'));
+  const inputs = Array.from(document.querySelectorAll('.paper-entry'));
   inputs.forEach((input, idx) => {
     input.addEventListener('keydown', function(e){
       if (e.key === 'Enter') {
