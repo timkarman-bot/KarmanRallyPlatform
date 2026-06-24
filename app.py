@@ -1351,8 +1351,6 @@ def inject_globals():
 @app.get("/")
 def home():
     show = get_active_show()
-    if not show:
-        return "No active show configured.", 500
     return render_template("home.html", show=show)
 
 @app.get("/uploads/flyers/<path:filename>")
