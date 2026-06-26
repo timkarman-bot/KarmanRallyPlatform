@@ -35,6 +35,7 @@
     </div>
 
     <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
+      {% if sponsorship_catalog %}
       <div class="text-xs font-semibold text-slate-500">SPONSOR FORM</div>
       <h2 class="mt-1 text-2xl font-semibold">Submit sponsorship</h2>
 
@@ -103,6 +104,11 @@
       </form>
 
       <div class="mt-4 text-xs text-slate-500">Card payments generate an automatic Stripe receipt. Invoice requests and check sales notify our team for follow-up. Customer service: info@karmankarshowsandevents.com</div>
+      {% else %}
+      <div class="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
+        Sponsorship packages are not published yet. Contact info@karmankarshowsandevents.com for availability.
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

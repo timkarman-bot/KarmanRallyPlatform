@@ -26,7 +26,7 @@
         </div>
 
         <div>
-          <label class="text-sm font-semibold">Phone (required)</label>
+          <label class="text-sm font-semibold">Phone (optional; required for text contact)</label>
           <input name="phone" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3">
         </div>
         <div>
@@ -49,6 +49,14 @@
       </label>
 
       <label class="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <input type="checkbox" name="charity_opt_in" class="mt-1">
+        <div>
+          <div class="font-semibold">Send me information from the benefiting charity</div>
+          <div class="text-sm text-slate-600">Optional and separate from sponsor offers</div>
+        </div>
+      </label>
+
+      <label class="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <input type="checkbox" name="updates_opt_in" class="mt-1">
         <div>
           <div class="font-semibold">Send me updates about future events</div>
@@ -58,7 +66,7 @@
 
       <div class="text-xs text-slate-500">
         By selecting these options, you agree Karman Kar Shows & Events may contact you about the event and, if selected,
-        share sponsor offers. Msg/data rates may apply. Opt out anytime.
+        share sponsor offers or charity information according to the boxes you select. Msg/data rates may apply. Opt out anytime.
       </div>
 
       <button class="btn btn-primary w-fit" type="submit">Continue</button>

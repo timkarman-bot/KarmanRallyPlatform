@@ -187,6 +187,14 @@ opt_in_future INTEGER
 
 Phone required only if opted in.
 
+Contact permissions are stored independently:
+
+- `opt_in_future` — Karman/event updates
+- `sponsor_opt_in` — sponsor information
+- `charity_opt_in` — benefiting-charity information
+
+A phone number or email address is required when any contact permission is selected.
+
 ## Attendees
 
 Fields:
@@ -200,6 +208,7 @@ Consent text stored for audit trail.
 Policy:
 - No data selling.
 - Sponsors may contact only if sponsor_opt_in = 1.
+- The benefiting charity may contact only if charity_opt_in = 1.
 
 ---
 

@@ -3,6 +3,9 @@
 {% block content %}
 <div class="max-w-4xl mx-auto">
   {% if upcoming_show %}
+    {% if event_date_status and event_date_status["is_past"] %}
+      <div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The listed event date has passed. Updated event information will be posted here when confirmed.</div>
+    {% endif %}
     <h1 class="text-3xl font-semibold tracking-tight">{{ upcoming_show["title"] or "Upcoming Show" }}</h1>
 
     {% if upcoming_show["description"] %}

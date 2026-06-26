@@ -3,3 +3,6 @@ __pycache__/
 .env
 .env
 app.db
+instance/waivers/
+instance/exports/
+static/img/sponsors/uploads/

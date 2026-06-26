@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% set title = "Admin • Leads" %}
+{% set title = "Admin • Consented Contacts" %}
 
 {% block content %}
 <div class="max-w-6xl mx-auto p-6">
-  <div class="flex items-end justify-between gap-4">
+  <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
-      <div class="text-xs font-semibold text-slate-500">RESTRICTED</div>
-      <h1 class="mt-1 text-3xl font-semibold tracking-tight">Lead Dashboard</h1>
-      <p class="mt-2 text-slate-600">People asking for upcoming show information appear here.</p>
+      <div class="text-xs font-semibold text-slate-500">RESTRICTED CONTACT DATA</div>
+      <h1 class="mt-1 text-3xl font-semibold tracking-tight">Consented Contact Center</h1>
+      <p class="mt-2 text-slate-600">Participants, attendees, and event-interest signups appear only when they selected at least one future-contact permission.</p>
     </div>
     <a class="btn btn-outline" href="{{ url_for('admin_page') }}">Back to admin</a>
   </div>
@@ -19,41 +19,29 @@
         <select name="show_id" class="rounded-2xl border border-slate-200 px-4 py-3">
           <option value="">All shows</option>
           {% for s in shows %}
-            <option value="{{ s['id'] }}" {% if selected_show_id == s['id'] %}selected{% endif %}>
-              {{ s["title"] }}
-            </option>
+            <option value="{{ s['id'] }}" {% if selected_show_id == s['id'] %}selected{% endif %}>{{ s["title"] }}</option>
           {% endfor %}
         </select>
       </div>
-
       <button class="btn btn-primary" type="submit">Apply Filter</button>
-
-      <a
-        class="btn btn-outline"
-        href="{{ url_for('admin_leads_export', show_id=selected_show_id) if selected_show_id else url_for('admin_leads_export') }}"
-      >
-        Export CSV
-      </a>
+      <a class="btn btn-outline" href="{{ url_for('admin_leads_export', show_id=selected_show_id) if selected_show_id else url_for('admin_leads_export') }}">Export consented CSV</a>
     </form>
   </div>
 
   <div class="mt-6 rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-    <div class="text-sm text-slate-600 mb-4">
-      Total leads: <span class="font-semibold text-slate-900">{{ leads|length }}</span>
-    </div>
-
+    <div class="text-sm text-slate-600 mb-4">Consented contacts: <span class="font-semibold text-slate-900">{{ leads|length }}</span></div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="text-xs uppercase text-slate-500">
           <tr>
             <th class="text-left py-2">Created</th>
             <th class="text-left py-2">Show</th>
-            <th class="text-left py-2">Name</th>
+            <th class="text-left py-2">Name / Source</th>
             <th class="text-left py-2">Email</th>
             <th class="text-left py-2">Phone</th>
-            <th class="text-left py-2">Email OK</th>
-            <th class="text-left py-2">Text OK</th>
-            <th class="text-left py-2">Source</th>
+            <th class="text-left py-2">Events</th>
+            <th class="text-left py-2">Sponsor</th>
+            <th class="text-left py-2">Charity</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -61,19 +49,19 @@
             <tr>
               <td class="py-3">{{ lead["created_at"] }}</td>
               <td class="py-3">{{ lead["show_title"] or "—" }}</td>
-              <td class="py-3">{{ lead["first_name"] }} {{ lead["last_name"] or "" }}</td>
+              <td class="py-3">
+                <div>{{ lead["full_name"] }}</div>
+                <div class="text-xs text-slate-500">{{ lead["source_type"] }} · {{ lead["source"] }}</div>
+              </td>
               <td class="py-3">{{ lead["email"] or "—" }}</td>
               <td class="py-3">{{ lead["phone"] or "—" }}</td>
-              <td class="py-3">{% if lead["wants_email"] %}Yes{% else %}No{% endif %}</td>
-              <td class="py-3">{% if lead["wants_text"] %}Yes{% else %}No{% endif %}</td>
-              <td class="py-3">{{ lead["source"] or "—" }}</td>
+              <td class="py-3">{% if lead["event_opt_in"] %}Yes{% else %}No{% endif %}</td>
+              <td class="py-3">{% if lead["sponsor_opt_in"] %}Yes{% else %}No{% endif %}</td>
+              <td class="py-3">{% if lead["charity_opt_in"] %}Yes{% else %}No{% endif %}</td>
             </tr>
+          {% else %}
+            <tr><td class="py-5 text-slate-500" colspan="8">No consented contacts yet.</td></tr>
           {% endfor %}
-          {% if not leads %}
-            <tr>
-              <td class="py-5 text-slate-500" colspan="8">No leads yet.</td>
-            </tr>
-          {% endif %}
         </tbody>
       </table>
     </div>

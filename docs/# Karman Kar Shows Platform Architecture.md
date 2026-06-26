@@ -1,6 +1,6 @@
 # Karman Kar Shows Platform Architecture
 
-Version: 0.8.3-beta
+Version: 0.10.0-beta
 
 Last Updated: June 2026
 
@@ -262,12 +262,10 @@ Leaderboard
 Supported Modes:
 
 Fundraiser Unlimited
-
-Future Planned:
-
-* One vote per attendee
-* Judge voting
-* Mixed voting
+* Registered participants only
+* Staff-issued judges only
+* Participants and judges
+* Voting disabled
 
 ---
 

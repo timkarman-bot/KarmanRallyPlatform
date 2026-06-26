@@ -1,6 +1,6 @@
 # Participant-Restricted Voting
 
-Version: 0.9.1-beta
+Version: 0.10.0-beta
 
 ## Purpose
 
@@ -10,13 +10,15 @@ Participant-restricted voting allows a show to limit voting to registered partic
 
 - Participant-only judging
 - Staff-issued judge codes
+- Judges-only voting
+- Participant-and-judge voting
 - School/team voting later
 - One vote per category
 - Vote changes before voting closes
 
 ## Workflow
 
-1. Admin sets the show voting mode to `participant_restricted`.
+1. Admin selects `participant_only`, `judge_only`, or `participant_restricted` for both groups.
 2. Voting is opened for the show.
 3. Registered participant cards are printed with backs enabled.
 4. The back of each registered card shows a Voting Access QR.
@@ -34,8 +36,9 @@ Admin can create a judge code from the show detail page. The judge receives a li
 
 - One voter has one active vote per category.
 - Participant voters cannot vote for their own vehicle.
+- Participant access requires a paid, paid-cash, manually paid, or comped registration.
 - Judges are not tied to a vehicle.
-- Vote changes are allowed until voting closes.
+- Vote changes are allowed only when the show setting permits changes.
 - Public fundraiser voting remains separate.
 
 ## New Routes

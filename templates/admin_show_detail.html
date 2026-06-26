@@ -125,6 +125,8 @@
           <option value="fundraiser_unlimited" {% if (s['voting_mode'] or 'fundraiser_unlimited') == 'fundraiser_unlimited' %}selected{% endif %}>Fundraiser voting</option>
           <option value="restricted_single" {% if (s['voting_mode'] or '') == 'restricted_single' %}selected{% endif %}>Restricted single vote</option>
           <option value="participant_restricted" {% if (s['voting_mode'] or '') == 'participant_restricted' %}selected{% endif %}>Participant/Judge restricted voting</option>
+          <option value="participant_only" {% if (s['voting_mode'] or '') == 'participant_only' %}selected{% endif %}>Registered participants only</option>
+          <option value="judge_only" {% if (s['voting_mode'] or '') == 'judge_only' %}selected{% endif %}>Staff-issued judges only</option>
           <option value="none" {% if (s['voting_mode'] or '') == 'none' %}selected{% endif %}>None — voting disabled</option>
         </select>
         <div class="mt-1 text-xs text-slate-500">Use Participant/Judge restricted voting for one-vote-per-category participant judging. Use None for Cruise In or no-awards events.</div>
@@ -133,7 +135,7 @@
       <div class="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <label class="flex items-start gap-3 text-sm">
           <input type="checkbox" name="participant_voting_enabled" class="mt-1"
-            {% if (s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') == 'participant_restricted' %}checked{% endif %}>
+            {% if (s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') in ['participant_restricted', 'participant_only', 'judge_only'] %}checked{% endif %}>
           <span>
             <span class="block font-semibold text-slate-900">Enable participant/judge access controls for this show</span>
             <span class="block text-slate-600">Use this when only registered participants, staff-issued judges, or approved voters should be able to vote. Shows that do not use restricted judging can leave this off.</span>
@@ -548,7 +550,7 @@
   </section>
   
 
-  {% set restricted_voting_enabled = ((s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') == 'participant_restricted') %}
+  {% set restricted_voting_enabled = ((s['participant_voting_enabled'] if 'participant_voting_enabled' in s.keys() else 0) == 1 or (s['voting_mode'] or '') in ['participant_restricted', 'participant_only', 'judge_only']) %}
   {% if restricted_voting_enabled %}
   <section class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">

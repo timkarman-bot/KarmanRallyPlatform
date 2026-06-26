@@ -9,7 +9,7 @@ import hashlib
 import json
 
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from waiver_system import DEFAULT_WAIVER_TEMPLATE, builder_config_to_json, normalize_builder_config
 
@@ -226,6 +226,7 @@ def init_db() -> None:
             email TEXT NOT NULL,
             opt_in_future INTEGER NOT NULL DEFAULT 0,
             sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            charity_opt_in INTEGER NOT NULL DEFAULT 0,
             consent_text TEXT,
             consent_version TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -235,6 +236,7 @@ def init_db() -> None:
 
     for sql in [
         "ALTER TABLE people ADD COLUMN sponsor_opt_in INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE people ADD COLUMN charity_opt_in INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE people ADD COLUMN consent_text TEXT",
         "ALTER TABLE people ADD COLUMN consent_version TEXT",
     ]:
@@ -299,6 +301,7 @@ def init_db() -> None:
             email TEXT NOT NULL,
             opt_in_future INTEGER NOT NULL DEFAULT 0,
             sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            charity_opt_in INTEGER NOT NULL DEFAULT 0,
             car_number INTEGER NOT NULL,
             year TEXT NOT NULL,
             make TEXT NOT NULL,
@@ -327,6 +330,7 @@ def init_db() -> None:
         "ALTER TABLE registration_intents ADD COLUMN waiver_template_id INTEGER",
         "ALTER TABLE registration_intents ADD COLUMN insurance_carrier TEXT",
         "ALTER TABLE registration_intents ADD COLUMN registration_slot_ids TEXT",
+        "ALTER TABLE registration_intents ADD COLUMN charity_opt_in INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             cur.execute(sql)
@@ -540,6 +544,7 @@ def init_db() -> None:
             zip TEXT,
             sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
             updates_opt_in INTEGER NOT NULL DEFAULT 0,
+            charity_opt_in INTEGER NOT NULL DEFAULT 0,
             consent_text TEXT,
             consent_version TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -547,6 +552,10 @@ def init_db() -> None:
         )
         """
     )
+    try:
+        cur.execute("ALTER TABLE attendees ADD COLUMN charity_opt_in INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute(
         """
@@ -616,6 +625,7 @@ def init_db() -> None:
             model TEXT,
             opt_in_future INTEGER NOT NULL DEFAULT 0,
             sponsor_opt_in INTEGER NOT NULL DEFAULT 0,
+            charity_opt_in INTEGER NOT NULL DEFAULT 0,
             waiver_version TEXT,
             waiver_text_sha256 TEXT,
             signed_name TEXT,
@@ -634,6 +644,10 @@ def init_db() -> None:
         )
         """
     )
+    try:
+        cur.execute("ALTER TABLE waiver_evidence ADD COLUMN charity_opt_in INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute(
         """
@@ -1141,7 +1155,14 @@ def create_show_admin(
         show_type_clean = "full"
 
     voting_mode_clean = (voting_mode or "fundraiser_unlimited").strip().lower()
-    if voting_mode_clean not in {"fundraiser_unlimited", "restricted_single", "none"}:
+    if voting_mode_clean not in {
+        "fundraiser_unlimited",
+        "restricted_single",
+        "participant_restricted",
+        "participant_only",
+        "judge_only",
+        "none",
+    }:
         voting_mode_clean = "fundraiser_unlimited"
 
     payment_mode_clean = (payment_mode or "stripe").strip().lower()
@@ -1333,7 +1354,7 @@ def update_show_admin_record(
             (charity_name or "").strip(),
             (charity_description or "").strip(),
             (voting_mode or "fundraiser_unlimited").strip(),
-            1 if int(participant_voting_enabled or 0) == 1 or (voting_mode or "").strip().lower() == "participant_restricted" else 0,
+            1 if int(participant_voting_enabled or 0) == 1 or (voting_mode or "").strip().lower() in {"participant_restricted", "participant_only", "judge_only"} else 0,
             (payment_mode or "stripe").strip(),
             (charity_processor_label or "").strip(),
             (external_payment_url or "").strip(),
@@ -1954,15 +1975,15 @@ def clear_show_charity_connect(show_id: int) -> None:
 
 # REGISTRATION / PEOPLE
 
-def create_person(name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> int:
+def create_person(name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str, charity_opt_in: bool = False) -> int:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, charity_opt_in, consent_text, consent_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), consent_text, consent_version),
+        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), _b(charity_opt_in), consent_text, consent_version),
     )
     conn.commit()
     pid = int(cur.lastrowid)
@@ -1970,15 +1991,15 @@ def create_person(name: str, phone: str, email: str, opt_in_future: bool, sponso
     return pid
 
 
-def update_person(person_id: int, name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str) -> None:
+def update_person(person_id: int, name: str, phone: str, email: str, opt_in_future: bool, sponsor_opt_in: bool, consent_text: str, consent_version: str, charity_opt_in: bool = False) -> None:
     conn = _conn()
     conn.execute(
         """
         UPDATE people
-        SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, consent_text = ?, consent_version = ?
+        SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, charity_opt_in = ?, consent_text = ?, consent_version = ?
         WHERE id = ?
         """,
-        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), consent_text, consent_version, person_id),
+        (name, phone, email, _b(opt_in_future), _b(sponsor_opt_in), _b(charity_opt_in), consent_text, consent_version, person_id),
     )
     conn.commit()
     conn.close()
@@ -2535,6 +2556,7 @@ def create_registration_intent(
     email: str,
     opt_in_future: bool,
     sponsor_opt_in: bool,
+    charity_opt_in: bool,
     year: str,
     make: str,
     model: str,
@@ -2623,12 +2645,12 @@ def create_registration_intent(
         cur.execute(
             """
             INSERT INTO registration_intents (
-                show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
+                show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in, charity_opt_in,
                 car_number, year, make, model, insurance_carrier,
                 waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                 waiver_template_id, amount_cents, payment_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 show_id,
@@ -2640,6 +2662,7 @@ def create_registration_intent(
                 email,
                 _b(opt_in_future),
                 _b(sponsor_opt_in),
+                _b(charity_opt_in),
                 car_number,
                 year,
                 make,
@@ -2761,8 +2784,8 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
 
         cur.execute(
             """
-            INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, consent_text, consent_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO people (name, phone, email, opt_in_future, sponsor_opt_in, charity_opt_in, consent_text, consent_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ri["owner_name"],
@@ -2770,6 +2793,7 @@ def finalize_registration_intent_paid(stripe_session_id: str) -> Dict[str, Any]:
                 ri["email"],
                 int(ri["opt_in_future"] or 0),
                 int(ri["sponsor_opt_in"] or 0),
+                int(ri["charity_opt_in"] or 0),
                 person_consent_text,
                 person_consent_version,
             ),
@@ -4003,16 +4027,16 @@ def get_show_sponsors(show_id: int):
 
 # ATTENDEES + DONATIONS + METRICS
 
-def create_attendee(show_id: int, first_name: str, last_name: str, phone: str, email: str, zip_code: str, sponsor_opt_in: bool, updates_opt_in: bool, consent_text: str, consent_version: str) -> int:
+def create_attendee(show_id: int, first_name: str, last_name: str, phone: str, email: str, zip_code: str, sponsor_opt_in: bool, updates_opt_in: bool, charity_opt_in: bool, consent_text: str, consent_version: str) -> int:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO attendees
-        (show_id, first_name, last_name, phone, email, zip, sponsor_opt_in, updates_opt_in, consent_text, consent_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (show_id, first_name, last_name, phone, email, zip, sponsor_opt_in, updates_opt_in, charity_opt_in, consent_text, consent_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (show_id, first_name, last_name, phone or None, email or None, zip_code or None, _b(sponsor_opt_in), _b(updates_opt_in), consent_text, consent_version),
+        (show_id, first_name, last_name, phone or None, email or None, zip_code or None, _b(sponsor_opt_in), _b(updates_opt_in), _b(charity_opt_in), consent_text, consent_version),
     )
     conn.commit()
     aid = int(cur.lastrowid)
@@ -4103,6 +4127,7 @@ def create_waiver_evidence_record(
     model: str,
     opt_in_future: bool,
     sponsor_opt_in: bool,
+    charity_opt_in: bool,
     waiver_version: str,
     waiver_text: str,
     signed_name: str,
@@ -4122,12 +4147,12 @@ def create_waiver_evidence_record(
         INSERT INTO waiver_evidence (
             show_id, registration_intent_id, show_car_id, car_number,
             owner_name, phone, email, year, make, model,
-            opt_in_future, sponsor_opt_in,
+            opt_in_future, sponsor_opt_in, charity_opt_in,
             waiver_version, waiver_text_sha256, signed_name, waiver_accepted,
             intent_token, html_path, request_path, ip_address, user_agent,
             created_at_utc, created_at_local
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             show_id,
@@ -4142,6 +4167,7 @@ def create_waiver_evidence_record(
             model,
             _b(opt_in_future),
             _b(sponsor_opt_in),
+            _b(charity_opt_in),
             waiver_version,
             _sha256_text(waiver_text),
             signed_name,
@@ -4182,7 +4208,7 @@ def log_audit_event(show_id: Optional[int], actor_type: str, action: str, detail
 
 
 def rate_limit_increment(bucket_key: str, window_seconds: int) -> int:
-    now_epoch = int(datetime.utcnow().timestamp())
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
     window_started_at = now_epoch - (now_epoch % max(1, int(window_seconds)))
     conn = _conn()
     cur = conn.cursor()
@@ -4397,6 +4423,77 @@ def list_event_interest_signups(show_id: Optional[int] = None) -> List[sqlite3.R
         ).fetchall()
     conn.close()
     return rows
+
+
+def list_marketing_contacts(show_id: Optional[int] = None) -> List[sqlite3.Row]:
+    """Unified, consent-only contact center for participants and attendees."""
+    conn = _conn()
+    participant_filter = "AND sc.show_id = ?" if show_id is not None else ""
+    attendee_filter = "AND a.show_id = ?" if show_id is not None else ""
+    interest_filter = "AND eis.show_id = ?" if show_id is not None else ""
+    params: list[Any] = []
+    if show_id is not None:
+        params = [int(show_id), int(show_id), int(show_id)]
+    rows = conn.execute(
+        f"""
+        SELECT * FROM (
+            SELECT p.created_at, sc.show_id, s.title AS show_title, s.slug AS show_slug,
+                   p.name AS full_name, p.email, p.phone,
+                   p.opt_in_future AS event_opt_in, p.sponsor_opt_in, p.charity_opt_in,
+                   p.consent_version, 'participant' AS source_type,
+                   'vehicle registration' AS source
+            FROM people p
+            JOIN show_cars sc ON sc.person_id = p.id
+            JOIN shows s ON s.id = sc.show_id
+            WHERE (p.opt_in_future = 1 OR p.sponsor_opt_in = 1 OR p.charity_opt_in = 1)
+              {participant_filter}
+
+            UNION ALL
+
+            SELECT a.created_at, a.show_id, s.title AS show_title, s.slug AS show_slug,
+                   trim(a.first_name || ' ' || a.last_name) AS full_name, a.email, a.phone,
+                   a.updates_opt_in AS event_opt_in, a.sponsor_opt_in, a.charity_opt_in,
+                   a.consent_version, 'attendee' AS source_type,
+                   'attendee check-in' AS source
+            FROM attendees a
+            JOIN shows s ON s.id = a.show_id
+            WHERE (a.updates_opt_in = 1 OR a.sponsor_opt_in = 1 OR a.charity_opt_in = 1)
+              {attendee_filter}
+
+            UNION ALL
+
+            SELECT eis.created_at, eis.show_id, s.title AS show_title, s.slug AS show_slug,
+                   trim(eis.first_name || ' ' || COALESCE(eis.last_name, '')) AS full_name,
+                   eis.email, eis.phone,
+                   CASE WHEN eis.wants_email = 1 OR eis.wants_text = 1 THEN 1 ELSE 0 END AS event_opt_in,
+                   0 AS sponsor_opt_in, 0 AS charity_opt_in, NULL AS consent_version,
+                   'interest' AS source_type, COALESCE(eis.source, 'event updates') AS source
+            FROM event_interest_signups eis
+            LEFT JOIN shows s ON s.id = eis.show_id
+            WHERE (eis.wants_email = 1 OR eis.wants_text = 1)
+              {interest_filter}
+        )
+        ORDER BY created_at DESC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def export_marketing_contacts_csv(show_id: Optional[int] = None) -> bytes:
+    rows = list_marketing_contacts(show_id)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    headers = [
+        "created_at", "show_id", "show_title", "show_slug", "full_name",
+        "email", "phone", "event_opt_in", "sponsor_opt_in", "charity_opt_in",
+        "consent_version", "source_type", "source",
+    ]
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([row[h] for h in headers])
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def export_event_interest_signups_csv(show_id: Optional[int] = None) -> bytes:

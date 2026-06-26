@@ -2,6 +2,16 @@
 {% set title = "Admin" %}
 
 {% block content %}
+{% if active_show_date_status and active_show_date_status["weekday_mismatch"] %}
+  <div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+    Event date warning: {{ active_show_date_status["message"] }} Review the configured date before publishing.
+  </div>
+{% endif %}
+{% if active_show_date_status and active_show_date_status["is_past"] %}
+  <div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+    The active show date has passed. Move it to Past or update the event date before the next public campaign.
+  </div>
+{% endif %}
 <div class="max-w-6xl">
   {% if not authed %}
     <div class="max-w-md mx-auto mt-16 bg-white rounded-3xl border border-slate-200 shadow-sm p-8">

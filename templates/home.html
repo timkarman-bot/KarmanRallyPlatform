@@ -4,6 +4,9 @@
 {% if show %}
 <section class="grid gap-6 lg:grid-cols-[1.3fr,.9fr] items-start">
   <div class="rounded-3xl p-8 glass border border-slate-200 shadow-sm">
+    {% if event_date_status and event_date_status["is_past"] %}
+      <div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">This event date has passed. Please confirm current event details before registering or traveling.</div>
+    {% endif %}
     <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 text-white text-xs">Current Featured Event</div>
     <h1 class="mt-4 text-4xl font-semibold tracking-tight">{{ show["title"] }}</h1>
     {% if show["description"] %}

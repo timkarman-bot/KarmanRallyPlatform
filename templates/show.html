@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% set title = "Show Details • Karman Kar Shows & Events" %}
 {% block content %}
+{% if event_date_status and event_date_status["is_past"] %}
+  <div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">This event date has passed. Confirm details with the organizer before registering or attending.</div>
+{% endif %}
 {% if not_found %}
   <div class="rounded-3xl bg-white border border-slate-200 p-8 shadow-sm">
     <h1 class="text-2xl font-semibold">Show not found</h1>
@@ -58,6 +61,8 @@
     <div class="mt-7 flex flex-wrap gap-3">
       {% if prereg_allowed(show) %}<a class="btn btn-primary" href="{{ url_for('register_page_for_show', show_slug=show['slug']) }}">Register your car</a>{% endif %}
       <a class="btn btn-outline" href="{{ url_for('events') }}">Upcoming events</a>
+      {% if event_date_status and event_date_status["parsed"] %}<a class="btn btn-outline" href="{{ url_for('show_calendar', slug=show['slug']) }}">Add to calendar</a>{% endif %}
+      {% if show["address"] and not show["hide_address"] %}<a class="btn btn-outline" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ show['address']|urlencode }}">Open map</a>{% endif %}
       {% if sponsorship_allowed(show) %}<a class="btn btn-outline" href="{{ url_for('sponsorship.public_sponsorship_page', show_slug=show['slug']) }}">Sponsor this event</a>{% endif %}
     </div>
 

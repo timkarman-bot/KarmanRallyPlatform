@@ -54,17 +54,15 @@
       </div>
 
       <div class="flex flex-wrap gap-2">
+        {% if show and show["voting_open"] %}
+        <form method="post" action="{{ url_for('admin_close_voting') }}" onsubmit="return confirm('Close voting now? New votes will stop immediately.');">
+          <button type="submit" class="btn btn-outline">Close Voting</button>
+        </form>
+        {% else %}
         <form method="post" action="{{ url_for('admin_open_voting') }}">
           <button type="submit" class="btn btn-primary">Open Voting</button>
         </form>
-
-        <form method="post" action="{{ url_for('admin_close_voting') }}">
-          <button type="submit" class="btn btn-outline">Close Voting</button>
-        </form>
-
-        <form method="post" action="{{ url_for('admin_toggle_voting') }}">
-          <button type="submit" class="btn btn-outline">Toggle</button>
-        </form>
+        {% endif %}
       </div>
     </div>
   </div>

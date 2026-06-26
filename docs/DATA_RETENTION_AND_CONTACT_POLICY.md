@@ -1,6 +1,6 @@
 # Data Retention and Contact Policy
 
-Version: 0.9.1-beta
+Version: 0.10.0-beta
 
 ## Purpose
 
@@ -58,6 +58,9 @@ Used only with consent:
 - Phone
 - Future event opt-in
 - Sponsor opt-in
+- Benefiting-charity opt-in
+
+Each permission is independent. Event-update permission does not grant sponsor or charity contact permission.
 
 ### Organizer View
 Limited to:
@@ -90,9 +93,13 @@ Instead:
 
 ## Future Feature
 
-Add Contact Center:
-- All opted-in participants
+Contact Center now includes:
+- All opted-in participants and attendees
 - Search by event history
 - Export future event mailing list
-- Unsubscribe tracking
 - Communication tags
+
+Still recommended:
+- Unsubscribe/suppression tracking
+- Contact preference history instead of overwriting consent
+- Campaign delivery logs
