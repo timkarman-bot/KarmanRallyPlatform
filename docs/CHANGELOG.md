@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.10.0-beta
+
+Date: 2026-06-25
+
+### Added
+- Separate event-update, sponsor, and benefiting-charity contact permissions.
+- Unified consented contact center across participants, attendees, and event-interest signups.
+- Participants-only and judges-only restricted voting modes.
+- CSRF protection for administrative changes and standard browser security headers.
+- Mobile navigation menu, stale-event warnings, weekday/date warnings, and waiver configuration safeguards.
+- Automated regression tests for consent retention, restricted voting modes, registration, and admin CSRF.
+
+### Changed
+- Contact exports contain only people with at least one recorded future-contact permission.
+- Restricted participant access requires a completed eligible registration.
+- Vote changes honor the show's `participant_vote_change_allowed` setting.
+- Event-day voting controls show only the valid next action.
+- Sponsor submission is hidden until public sponsorship packages exist.
+
+### Privacy and Operations
+- Generated waiver captures and exports are ignored by Git.
+- Previously bundled generated waiver files were removed from the release package.
+- Show-scoped exports require owner access; platform-wide contact export requires super admin.
+
 ## 0.9.2-beta v3
 
 ### Added

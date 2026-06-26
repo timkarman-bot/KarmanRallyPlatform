@@ -91,6 +91,7 @@ from database import (
     log_audit_event,
     rate_limit_increment,
     list_event_interest_signups,
+    list_marketing_contacts,
     create_event_interest_signup,
     list_shows_admin,
     list_public_registerable_shows,
@@ -100,6 +101,7 @@ from database import (
     set_active_show,
     set_upcoming_show,
     export_event_interest_signups_csv,
+    export_marketing_contacts_csv,
     set_past_show,
     list_waiver_templates,
     get_waiver_template_by_id,
@@ -261,12 +263,13 @@ CONSENT_TEXT_CAR_OWNER = (
     "By submitting this form, you agree Karman Kar Shows & Events may contact you about this event and future events "
     "if selected. Msg/data rates may apply. Opt out anytime."
 )
-CONSENT_VERSION = "2026-03-11"
+CONSENT_VERSION = "2026-06-25"
 ATTENDEE_CONSENT_TEXT = (
     "By selecting these options, you agree Karman Kar Shows & Events may contact you about the event and, "
-    "if selected, share sponsor offers. Msg/data rates may apply. Opt out anytime."
+    "if selected, share sponsor offers or information from the benefiting charity. "
+    "Each permission is optional. Msg/data rates may apply. Opt out anytime."
 )
-ATTENDEE_CONSENT_VERSION = "2026-03-11"
+ATTENDEE_CONSENT_VERSION = "2026-06-25"
 
 DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
     "Vote payments are processed through the event payment system. "
@@ -278,9 +281,36 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.9.2-beta"
+APP_VERSION = "0.10.0-beta"
 APP_RELEASE_STAGE = "beta"
-APP_RELEASE_NAME = "Contact Message Center and NWRA Email Beta"
+APP_RELEASE_NAME = "Consent, Restricted Voting, and Event-Day Safety Beta"
+
+
+def _event_date_status(show: Any) -> Dict[str, Any]:
+    raw = str(show["date"] or "").strip() if show else ""
+    if not raw:
+        return {"parsed": False, "is_past": False, "weekday_mismatch": False, "message": ""}
+    supplied_weekday = raw.split(",", 1)[0].strip() if "," in raw else ""
+    date_part = raw.split(",", 1)[1].strip() if supplied_weekday else raw
+    parsed = None
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%B %d %Y", "%b %d %Y"):
+        try:
+            parsed = datetime.strptime(date_part, fmt).date()
+            break
+        except ValueError:
+            continue
+    if not parsed:
+        return {"parsed": False, "is_past": False, "weekday_mismatch": False, "message": ""}
+    expected_weekday = parsed.strftime("%A")
+    mismatch = bool(supplied_weekday and supplied_weekday.lower() != expected_weekday.lower())
+    return {
+        "parsed": True,
+        "date": parsed.isoformat(),
+        "is_past": parsed < datetime.now(ZoneInfo("America/Chicago")).date(),
+        "weekday_mismatch": mismatch,
+        "expected_weekday": expected_weekday,
+        "message": f"Configured weekday should be {expected_weekday}." if mismatch else "",
+    }
 
 
 def prereg_allowed(show) -> bool:
@@ -419,11 +449,24 @@ def _show_voting_mode(show: Any) -> str:
         return "fundraiser_unlimited"
     value = (show["voting_mode"] if "voting_mode" in show.keys() else "fundraiser_unlimited") or "fundraiser_unlimited"
     value = str(value).strip().lower()
-    return value if value in {"fundraiser_unlimited", "restricted_single", "participant_restricted", "none"} else "fundraiser_unlimited"
+    return value if value in {
+        "fundraiser_unlimited", "restricted_single", "participant_restricted",
+        "participant_only", "judge_only", "none",
+    } else "fundraiser_unlimited"
 
 
 def _show_participant_voting(show: Any) -> bool:
-    return _show_voting_mode(show) == "participant_restricted"
+    return _show_voting_mode(show) in {"participant_restricted", "participant_only", "judge_only"}
+
+
+def _restricted_voter_allowed(show: Any, voter_type: str) -> bool:
+    mode = _show_voting_mode(show)
+    voter_type = (voter_type or "").strip().lower()
+    if mode == "participant_only":
+        return voter_type == "participant"
+    if mode == "judge_only":
+        return voter_type == "judge"
+    return mode == "participant_restricted" and voter_type in {"participant", "judge"}
 
 
 def _voter_session_key(show_id: int) -> str:
@@ -736,12 +779,44 @@ def _same_origin_allowed() -> bool:
     return True
 
 
+def _csrf_token() -> str:
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+def _valid_csrf() -> bool:
+    expected = session.get("_csrf_token", "")
+    supplied = request.form.get("_csrf_token", "") or request.headers.get("X-CSRF-Token", "")
+    return bool(expected and supplied and hmac.compare_digest(str(expected), str(supplied)))
+
+
 @app.before_request
 def security_before_request():
     session.permanent = True
     if not _same_origin_allowed():
         abort(400, "Blocked request origin.")
+    if (
+        request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and request.endpoint != "stripe_webhook"
+        and request.path.startswith("/admin")
+        and not _valid_csrf()
+    ):
+        abort(400, "Security token expired. Refresh the page and try again.")
     _maybe_auto_close_voting()
+
+
+@app.after_request
+def security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if not IS_DEV:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 def _check_admin_password(raw_password: str) -> bool:
@@ -783,6 +858,7 @@ def _save_waiver_capture_html(
     model: str,
     opt_in_future: bool,
     sponsor_opt_in: bool,
+    charity_opt_in: bool,
     waiver_text: str,
     waiver_version: str,
     signed_name: str,
@@ -828,6 +904,7 @@ pre {{ white-space: pre-wrap; font-family: Arial, Helvetica, sans-serif; }}
 <div><strong>Email:</strong> {escape(email)}</div>
 <div><strong>Future Show Updates:</strong> {'Yes' if opt_in_future else 'No'}</div>
 <div><strong>Sponsor Information:</strong> {'Yes' if sponsor_opt_in else 'No'}</div>
+<div><strong>Charity Information:</strong> {'Yes' if charity_opt_in else 'No'}</div>
 </div>
 <div class="box"><h2>Waiver</h2>
 <div><strong>Waiver Version:</strong> {escape(waiver_version)}</div>
@@ -859,6 +936,7 @@ def _record_waiver_evidence(
     model: str,
     opt_in_future: bool,
     sponsor_opt_in: bool,
+    charity_opt_in: bool,
     waiver_text: str,
     waiver_version: str,
     signed_name: str,
@@ -880,6 +958,7 @@ def _record_waiver_evidence(
         model=model,
         opt_in_future=opt_in_future,
         sponsor_opt_in=sponsor_opt_in,
+        charity_opt_in=charity_opt_in,
         waiver_version=waiver_version,
         waiver_text=waiver_text,
         signed_name=signed_name,
@@ -928,7 +1007,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
         cur.execute(
             """
             UPDATE people
-            SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, consent_text = ?, consent_version = ?
+            SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, charity_opt_in = ?, consent_text = ?, consent_version = ?
             WHERE id = ?
             """,
             (
@@ -937,6 +1016,7 @@ def _finalize_placeholder_claim_paid(*, stripe_session_id: str, show_car_id: int
                 ri["email"],
                 int(ri["opt_in_future"] or 0),
                 int(ri["sponsor_opt_in"] or 0),
+                int(ri["charity_opt_in"] or 0),
                 CONSENT_TEXT_CAR_OWNER,
                 CONSENT_VERSION,
                 person_id,
@@ -1046,10 +1126,10 @@ def _finalize_placeholder_claim_cash(*, intent_token: str, show_car_id: int) -> 
         cur.execute(
             """
             UPDATE people
-            SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, consent_text = ?, consent_version = ?
+            SET name = ?, phone = ?, email = ?, opt_in_future = ?, sponsor_opt_in = ?, charity_opt_in = ?, consent_text = ?, consent_version = ?
             WHERE id = ?
             """,
-            (ri["owner_name"], ri["phone"], ri["email"], int(ri["opt_in_future"] or 0), int(ri["sponsor_opt_in"] or 0), CONSENT_TEXT_CAR_OWNER, CONSENT_VERSION, person_id),
+            (ri["owner_name"], ri["phone"], ri["email"], int(ri["opt_in_future"] or 0), int(ri["sponsor_opt_in"] or 0), int(ri["charity_opt_in"] or 0), CONSENT_TEXT_CAR_OWNER, CONSENT_VERSION, person_id),
         )
 
         class_id, class_needs_review = _auto_class_for_vehicle(show_id, ri["year"], ri["make"], ri["model"])
@@ -1180,6 +1260,27 @@ def _admin_can_access_show(show_id: int) -> bool:
 def _require_show_access(show_id: int) -> None:
     if not _admin_can_access_show(int(show_id)):
         abort(403, "You do not have access to this show.")
+
+
+def _admin_roles_for_show(show_id: int) -> set[str]:
+    if _admin_is_super():
+        return {"super_admin"}
+    admin_user_id = _current_admin_user_id()
+    if not admin_user_id:
+        return set()
+    return {
+        (row["role"] or "").strip().lower()
+        for row in list_admin_user_show_roles(admin_user_id)
+        if int(row["show_id"]) == int(show_id)
+    }
+
+
+def _require_show_permission(show_id: int, allowed_roles: set[str]) -> None:
+    _require_show_access(show_id)
+    if _admin_is_super():
+        return
+    if not (_admin_roles_for_show(show_id) & allowed_roles):
+        abort(403, "Your role does not allow this action.")
 
 
 def require_super_admin(view_func):
@@ -1342,16 +1443,18 @@ def inject_globals():
         "current_admin_role": _current_admin_role(),
         "current_admin_label": _current_admin_label(),
         "admin_is_super": _admin_is_super(),
+        "csrf_token": _csrf_token(),
         "prereg_allowed": prereg_allowed,
         "sponsorship_allowed": sponsorship_allowed,
         "registered_cars": registered_cars,
+        "active_show_date_status": _event_date_status(show),
     }
 
 
 @app.get("/")
 def home():
     show = get_active_show()
-    return render_template("home.html", show=show)
+    return render_template("home.html", show=show, event_date_status=_event_date_status(show))
 
 @app.get("/uploads/flyers/<path:filename>")
 def uploaded_flyer(filename: str):
@@ -1374,6 +1477,7 @@ def events():
         "events.html",
         show=get_active_show(),
         upcoming_show=upcoming_show,
+        event_date_status=_event_date_status(upcoming_show),
     )
     
 @app.get("/contact")
@@ -1508,6 +1612,41 @@ def show_page(slug: str):
         show=show,
         not_found=False,
         registration_slots=_registration_slots_for_public(int(show["id"])),
+        event_date_status=_event_date_status(show),
+    )
+
+
+@app.get("/show/<slug>/calendar.ics")
+def show_calendar(slug: str):
+    show = get_show_by_slug(slug)
+    if not show:
+        return "Show not found.", 404
+    status = _event_date_status(show)
+    if not status.get("parsed"):
+        return "The event date is not calendar-compatible yet.", 400
+    start = datetime.strptime(status["date"], "%Y-%m-%d").date()
+    end = start + timedelta(days=1)
+    def ics(value: str) -> str:
+        return str(value or "").replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+    payload = "\r\n".join([
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Karman Kar Shows//Event Calendar//EN",
+        "BEGIN:VEVENT",
+        f"UID:{show['slug']}-{show['id']}@karmankarshowsandevents.com",
+        f"DTSTART;VALUE=DATE:{start.strftime('%Y%m%d')}",
+        f"DTEND;VALUE=DATE:{end.strftime('%Y%m%d')}",
+        f"SUMMARY:{ics(show['title'])}",
+        f"LOCATION:{ics(show['address'] or show['location_name'])}",
+        f"DESCRIPTION:{ics(show['description'])}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ])
+    return app.response_class(
+        payload,
+        mimetype="text/calendar",
+        headers={"Content-Disposition": f"attachment; filename={show['slug']}.ics"},
     )
 
 def _registration_availability(show: Any) -> Dict[str, Any]:
@@ -1669,6 +1808,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
     email = request.form.get("email", "").strip().lower()
     opt_in_future = request.form.get("opt_in_future", "") == "on"
     sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
+    charity_opt_in = request.form.get("charity_opt_in", "") == "on"
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
@@ -1681,14 +1821,16 @@ def _register_submit_impl(show_slug: Optional[str] = None):
 
     if not (name and year and make and model and waiver_signed_name):
         return render_template("register.html", show=show, registration_slots=registration_slots, error="Please fill out all required fields.")
-    if (opt_in_future or sponsor_opt_in) and not phone:
-        return render_template("register.html", show=show, registration_slots=registration_slots, error="Phone number is required if you opt in to updates or sponsor information.")
+    if (opt_in_future or sponsor_opt_in or charity_opt_in) and not (phone or email):
+        return render_template("register.html", show=show, registration_slots=registration_slots, error="Provide a phone number or email address when selecting contact permissions.")
     if not waiver_accepted:
         return render_template("register.html", show=show, registration_slots=registration_slots, error="You must accept the waiver to continue.")
 
     registration_fee_cents = int(show["registration_fee_cents"] or 0)
     waiver_text = (show.get("waiver_text") or "").strip()
     waiver_version = (show.get("waiver_version") or "").strip()
+    if not waiver_text or not waiver_version:
+        return render_template("register.html", show=show, registration_slots=registration_slots, error="Registration is temporarily unavailable because the event waiver has not been configured.")
     waiver_template_id = int(show["waiver_template_id"]) if show.get("waiver_template_id") else None
 
     try:
@@ -1699,6 +1841,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
             email=email,
             opt_in_future=opt_in_future,
             sponsor_opt_in=sponsor_opt_in,
+            charity_opt_in=charity_opt_in,
             year=year,
             make=make,
             model=model,
@@ -1726,6 +1869,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
         model=model,
         opt_in_future=opt_in_future,
         sponsor_opt_in=sponsor_opt_in,
+        charity_opt_in=charity_opt_in,
         waiver_text=waiver_text,
         waiver_version=waiver_version,
         signed_name=waiver_signed_name,
@@ -1747,6 +1891,7 @@ def _register_submit_impl(show_slug: Optional[str] = None):
         model=model,
         opt_in_future=opt_in_future,
         sponsor_opt_in=sponsor_opt_in,
+        charity_opt_in=charity_opt_in,
         waiver_text=waiver_text,
         waiver_version=waiver_version,
         signed_name=waiver_signed_name,
@@ -1963,6 +2108,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     email = request.form.get("email", "").strip().lower()
     opt_in_future = request.form.get("opt_in_future", "") == "on"
     sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
+    charity_opt_in = request.form.get("charity_opt_in", "") == "on"
     year = request.form.get("year", "").strip()
     make = request.form.get("make", "").strip()
     model = request.form.get("model", "").strip()
@@ -1975,8 +2121,8 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
 
     if not (owner_name and year and make and model and waiver_signed_name):
         return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Please fill out all required fields.")
-    if (opt_in_future or sponsor_opt_in) and not phone:
-        return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Phone number is required if you opt in to updates or sponsor information.")
+    if (opt_in_future or sponsor_opt_in or charity_opt_in) and not (phone or email):
+        return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Provide a phone number or email address when selecting contact permissions.")
     if not waiver_accepted:
         return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="You must accept the waiver to continue.")
 
@@ -1984,6 +2130,8 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
     registration_fee_cents = int(show["registration_fee_cents"] or 0)
     waiver_text = (show.get("waiver_text") or "").strip()
     waiver_version = (show.get("waiver_version") or "").strip()
+    if not waiver_text or not waiver_version:
+        return render_template("placeholder_claim.html", show=show, car=car, registration_slots=registration_slots, error="Registration is temporarily unavailable because the event waiver has not been configured.")
     waiver_template_id = int(show["waiver_template_id"]) if show.get("waiver_template_id") else None
 
     try:
@@ -1994,6 +2142,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             email=email,
             opt_in_future=opt_in_future,
             sponsor_opt_in=sponsor_opt_in,
+            charity_opt_in=charity_opt_in,
             year=year,
             make=make,
             model=model,
@@ -2017,11 +2166,11 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
             cur.execute(
                 """
                 INSERT INTO registration_intents (
-                    show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in,
+                    show_id, registration_slot_id, registration_slot_ids, intent_token, owner_name, phone, email, opt_in_future, sponsor_opt_in, charity_opt_in,
                     car_number, year, make, model, insurance_carrier,
                     waiver_accepted, waiver_signed_name, waiver_text, waiver_version, waiver_text_sha256,
                     waiver_template_id, amount_cents, payment_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     int(show["id"]),
@@ -2033,6 +2182,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
                     email,
                     1 if opt_in_future else 0,
                     1 if sponsor_opt_in else 0,
+                    1 if charity_opt_in else 0,
                     car_number,
                     year,
                     make,
@@ -2063,6 +2213,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
         model=model,
         opt_in_future=opt_in_future,
         sponsor_opt_in=sponsor_opt_in,
+        charity_opt_in=charity_opt_in,
         waiver_text=waiver_text,
         waiver_version=waiver_version,
         signed_name=waiver_signed_name,
@@ -2084,6 +2235,7 @@ def placeholder_claim_submit(show_slug: str, car_token: str):
         model=model,
         opt_in_future=opt_in_future,
         sponsor_opt_in=sponsor_opt_in,
+        charity_opt_in=charity_opt_in,
         waiver_text=waiver_text,
         waiver_version=waiver_version,
         signed_name=waiver_signed_name,
@@ -2273,6 +2425,7 @@ def attendee_submit(show_slug: str):
     zip_code = request.form.get("zip", "").strip()
     sponsor_opt_in = request.form.get("sponsor_opt_in", "") == "on"
     updates_opt_in = request.form.get("updates_opt_in", "") == "on"
+    charity_opt_in = request.form.get("charity_opt_in", "") == "on"
 
     if not first_name:
         first_name = "Guest"
@@ -2287,6 +2440,7 @@ def attendee_submit(show_slug: str):
         zip_code,
         sponsor_opt_in,
         updates_opt_in,
+        charity_opt_in,
         ATTENDEE_CONSENT_TEXT,
         ATTENDEE_CONSENT_VERSION,
     )
@@ -2406,7 +2560,7 @@ def vote_qty_page(show_slug: str, car_token: str, category_slug: str):
 
     if _show_participant_voting(show):
         voter = _active_restricted_voter(show)
-        if not voter:
+        if not voter or not _restricted_voter_allowed(show, voter["voter_type"] if voter else ""):
             return render_template(
                 "restricted_vote_not_authorized.html",
                 show=show,
@@ -2450,10 +2604,15 @@ def participant_vote_access(show_slug: str, car_token: str):
         return "Show not found.", 404
     if not _show_participant_voting(show):
         return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug="", category_name=""), 403
+    if not _restricted_voter_allowed(show, "participant"):
+        return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug="", category_name=""), 403
     car = get_show_car_private_by_token(int(show["id"]), car_token)
     if not car:
         return "Voting access not found.", 404
     if int(car["is_placeholder"] or 0) == 1:
+        return render_template("restricted_vote_not_authorized.html", show=show, car=car, category_slug="", category_name=""), 403
+    eligible_statuses = {"paid", "paid_cash", "manual_paid", "comped"}
+    if str(car["registration_payment_status"] or "").strip().lower() not in eligible_statuses:
         return render_template("restricted_vote_not_authorized.html", show=show, car=car, category_slug="", category_name=""), 403
     voter = get_or_create_participant_voter(int(show["id"]), int(car["id"]))
     voter = activate_show_voter(int(show["id"]), voter["voter_token"])
@@ -2475,6 +2634,8 @@ def judge_vote_access(show_slug: str, voter_token: str):
     if not show:
         return "Show not found.", 404
     if not _show_participant_voting(show):
+        return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug="", category_name=""), 403
+    if not _restricted_voter_allowed(show, "judge"):
         return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug="", category_name=""), 403
     voter = activate_show_voter(int(show["id"]), voter_token)
     if not voter:
@@ -2509,6 +2670,8 @@ def restricted_vote_submit():
     voter = _active_restricted_voter(show)
     if not voter:
         return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug=category_slug, category_name=CATEGORY_SLUGS[category_slug]), 403
+    if not _restricted_voter_allowed(show, voter["voter_type"]):
+        return render_template("restricted_vote_not_authorized.html", show=show, car=None, category_slug=category_slug, category_name=CATEGORY_SLUGS[category_slug]), 403
 
     car = get_show_car_public_by_token(int(show["id"]), car_token)
     if not car:
@@ -2529,6 +2692,21 @@ def restricted_vote_submit():
             category_names=CATEGORY_SLUGS,
             error="You cannot vote for your own vehicle in participant voting.",
         ), 400
+
+    existing_vote = get_restricted_vote(int(show["id"]), int(voter["id"]), category_slug)
+    if existing_vote and int(show["participant_vote_change_allowed"] or 0) != 1:
+        return render_template(
+            "restricted_vote.html",
+            show=show,
+            car=car,
+            voter=voter,
+            category_slug=category_slug,
+            category_name=CATEGORY_SLUGS[category_slug],
+            existing_vote=existing_vote,
+            progress=restricted_vote_progress(int(show["id"]), int(voter["id"]), _participant_category_keys()),
+            category_names=CATEGORY_SLUGS,
+            error="Your vote for this category is already locked.",
+        ), 409
 
     upsert_restricted_vote(
         int(show["id"]),
@@ -3819,7 +3997,7 @@ def admin_shows_create():
         charity_name=request.form.get("charity_name", "").strip(),
         charity_description=request.form.get("charity_description", "").strip(),
         voting_mode=voting_mode,
-        participant_voting_enabled=1 if request.form.get("participant_voting_enabled") == "on" or voting_mode == "participant_restricted" else 0,
+        participant_voting_enabled=1 if request.form.get("participant_voting_enabled") == "on" or voting_mode in {"participant_restricted", "participant_only", "judge_only"} else 0,
         payment_mode=payment_mode,
         charity_processor_label=charity_processor_label,
         external_payment_url=external_payment_url,
@@ -3918,7 +4096,7 @@ def admin_shows_update(show_id: int):
         charity_name=request.form.get("charity_name", "").strip(),
         charity_description=request.form.get("charity_description", "").strip(),
         voting_mode=voting_mode,
-        participant_voting_enabled=1 if request.form.get("participant_voting_enabled") == "on" or voting_mode == "participant_restricted" else 0,
+        participant_voting_enabled=1 if request.form.get("participant_voting_enabled") == "on" or voting_mode in {"participant_restricted", "participant_only", "judge_only"} else 0,
         payment_mode=payment_mode,
         charity_processor_label=charity_processor_label,
         external_payment_url=external_payment_url,
@@ -3987,6 +4165,9 @@ def admin_shows_archive(show_id: int):
 @app.get("/admin/waivers")
 @require_admin
 def admin_waivers():
+    show = _admin_current_show()
+    if show:
+        _require_show_permission(int(show["id"]), {"show_owner"})
     return render_template("admin_waivers.html", templates=list_waiver_templates(), show=get_active_show(), preset_labels=PRESET_LABELS)
 
 
@@ -4090,6 +4271,7 @@ def admin_print_cards_pdf():
     show = get_active_show()
     if not show:
         return "No active show.", 500
+    _require_show_permission(int(show["id"]), {"show_owner", "registrar", "volunteer"})
 
     ids_raw = request.args.get("ids", "").strip()
     all_raw = request.args.get("all", "").strip()
@@ -4222,6 +4404,7 @@ def admin_show_mode_mark_cash_paid(show_car_id: int):
     show = get_active_show()
     if not show:
         return "No active show.", 500
+    _require_show_permission(int(show["id"]), {"show_owner", "registrar"})
     conn = _conn_direct()
     try:
         conn.execute(
@@ -4350,6 +4533,7 @@ def admin_close_voting_and_export():
 def admin_toggle_voting():
     show = get_active_show()
     if show:
+        _require_show_permission(int(show["id"]), {"show_owner"})
         toggle_show_voting(int(show["id"]))
         _log_event("admin.voting_toggled", int(show["id"]), actor_type="admin")
     return redirect(url_for("admin_page"))
@@ -4360,6 +4544,7 @@ def admin_toggle_voting():
 def admin_open_voting():
     show = get_active_show()
     if show:
+        _require_show_permission(int(show["id"]), {"show_owner"})
         set_show_voting_open(int(show["id"]), True)
         _log_event("admin.voting_opened", int(show["id"]), actor_type="admin")
     return redirect(url_for("admin_page"))
@@ -4370,6 +4555,7 @@ def admin_open_voting():
 def admin_close_voting():
     show = get_active_show()
     if show:
+        _require_show_permission(int(show["id"]), {"show_owner"})
         set_show_voting_open(int(show["id"]), False)
         _log_event("admin.voting_closed", int(show["id"]), actor_type="admin")
     return redirect(url_for("admin_page"))
@@ -4381,6 +4567,7 @@ def admin_reset_votes():
     show = get_active_show()
     if not show:
         return "No active show.", 500
+    _require_show_permission(int(show["id"]), {"show_owner"})
     zip_bytes, filename = build_snapshot_zip_bytes(int(show["id"]))
     reset_votes_for_show(int(show["id"]))
     _log_event("admin.votes_reset", int(show["id"]), {"backup_filename": filename}, actor_type="admin")
@@ -4400,7 +4587,7 @@ def admin_leads():
     if not _admin_is_super() and not selected_show_id and allowed_ids:
         # Scoped users see leads for their first accessible show by default.
         selected_show_id = allowed_ids[0]
-    leads = list_event_interest_signups(selected_show_id)
+    leads = list_marketing_contacts(selected_show_id)
 
     return render_template(
         "admin_leads.html",
@@ -4416,9 +4603,13 @@ def admin_leads():
 def admin_leads_export():
     show_id_raw = request.args.get("show_id", "").strip()
     selected_show_id = int(show_id_raw) if show_id_raw.isdigit() else None
+    if selected_show_id:
+        _require_show_permission(selected_show_id, {"show_owner"})
+    elif not _admin_is_super():
+        abort(403, "Platform-wide contact export requires super admin access.")
 
-    csv_bytes = export_event_interest_signups_csv(selected_show_id)
-    filename = "event-leads.csv" if selected_show_id is None else f"event-leads-show-{selected_show_id}.csv"
+    csv_bytes = export_marketing_contacts_csv(selected_show_id)
+    filename = "consented-contacts.csv" if selected_show_id is None else f"consented-contacts-show-{selected_show_id}.csv"
 
     return send_file(
         io.BytesIO(csv_bytes),

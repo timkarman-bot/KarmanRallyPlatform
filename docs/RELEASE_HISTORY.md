@@ -1,5 +1,15 @@
 # Release History
 
+## 0.10.0-beta — Consent, Restricted Voting, and Event-Day Safety
+
+Date: 2026-06-25
+
+This release adds independently recorded permissions for future event information, sponsor information, and benefiting-charity information. The admin contact center now combines consented registrations, attendee check-ins, and upcoming-event signups while excluding operational records that do not include marketing consent.
+
+Restricted voting can be configured for registered participants only, staff-issued judges only, or both. Participant access requires an eligible completed registration, self-voting remains blocked, and vote changes can be disabled.
+
+Security and operations improvements include administrative CSRF protection, stronger role checks for sensitive show actions and contact exports, security headers, mobile navigation, stale-date warnings, empty-waiver registration blocking, safer voting controls, and removal of generated waiver captures from source control.
+
 ## 0.9.2-beta v3 — Import Hardening
 Date: 2026-06-09
 
