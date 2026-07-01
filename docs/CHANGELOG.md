@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.3-beta
+
+Date: 2026-07-01
+
+### Fixed
+- A show whose configured event date has passed is no longer displayed as the current featured event.
+- Public navigation now hides current-show actions for an expired active record.
+- The homepage uses the centered no-active-show logo, notification message, and Contact link until a current or future show is activated.
+
 ## 0.10.2-beta
 
 Date: 2026-07-01

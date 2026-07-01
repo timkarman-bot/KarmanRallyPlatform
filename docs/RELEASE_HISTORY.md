@@ -1,5 +1,11 @@
 # Release History
 
+## 0.10.3-beta - Expired Active Show Protection
+
+Date: 2026-07-01
+
+Expired active records remain available to administrators but are no longer presented to visitors as the current featured event. The public homepage and navigation now return to the no-active-show state until a current or future show is activated.
+
 ## 0.10.2-beta — Upcoming Show Messaging
 
 Date: 2026-07-01

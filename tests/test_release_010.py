@@ -146,6 +146,21 @@ class Release010Tests(unittest.TestCase):
         self.assertEqual(contacts[0]["sponsor_opt_in"], 1)
         self.assertEqual(contacts[0]["charity_opt_in"], 1)
 
+    def test_expired_active_show_uses_public_no_show_state(self):
+        show_id = self._show(slug="expired-public-show", voting_mode="none")
+        conn = self.database._conn()
+        conn.execute("UPDATE shows SET date = ? WHERE id = ?", ("April 25 or 26, 2026", show_id))
+        conn.commit()
+        conn.close()
+        self.database.set_active_show(show_id)
+
+        response = self.app.test_client().get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No Active Show", response.data)
+        self.assertNotIn(b"Current Featured Event", response.data)
+        self.assertNotIn(b"This event date has passed", response.data)
+
 
 if __name__ == "__main__":
     unittest.main()

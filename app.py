@@ -282,7 +282,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.10.2-beta"
+APP_VERSION = "0.10.3-beta"
 APP_RELEASE_STAGE = "beta"
 APP_RELEASE_NAME = "Consent, Restricted Voting, and Event-Day Safety Beta"
 
@@ -328,6 +328,14 @@ def _event_date_status(show: Any) -> Dict[str, Any]:
         "expected_weekday": expected_weekday,
         "message": f"Configured weekday should be {expected_weekday}." if mismatch else "",
     }
+
+
+def _get_public_active_show():
+    """Return the configured active show only while its event date is current or future."""
+    show = get_active_show()
+    if show and _event_date_status(show)["is_past"]:
+        return None
+    return show
 
 
 def prereg_allowed(show) -> bool:
@@ -1444,7 +1452,7 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
 
 @app.context_processor
 def inject_globals():
-    show = get_active_show()
+    show = _get_public_active_show()
     title_sponsor, sponsors = (None, [])
     registered_cars = 0
     if show:
@@ -1470,7 +1478,7 @@ def inject_globals():
 
 @app.get("/")
 def home():
-    show = get_active_show()
+    show = _get_public_active_show()
     return render_template("home.html", show=show, event_date_status=_event_date_status(show))
 
 @app.get("/uploads/flyers/<path:filename>")
