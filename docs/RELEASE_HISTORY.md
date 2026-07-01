@@ -1,5 +1,11 @@
 # Release History
 
+## 0.10.2-beta — Upcoming Show Messaging
+
+Date: 2026-07-01
+
+Expired events are no longer displayed as upcoming shows. When no current or future show is available, visitors are directed to contact Karman Kar Shows for notifications or check back at a later date.
+
 ## 0.10.1-beta — No Active Show Home Page
 
 Date: 2026-07-01

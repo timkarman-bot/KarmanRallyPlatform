@@ -8,6 +8,7 @@ import os
 import io
 import csv
 import hmac
+import re
 import secrets
 import sqlite3
 import hashlib
@@ -281,7 +282,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.10.1-beta"
+APP_VERSION = "0.10.2-beta"
 APP_RELEASE_STAGE = "beta"
 APP_RELEASE_NAME = "Consent, Restricted Voting, and Event-Day Safety Beta"
 
@@ -299,6 +300,22 @@ def _event_date_status(show: Any) -> Dict[str, Any]:
             break
         except ValueError:
             continue
+    if not parsed:
+        # Handle public-facing ranges such as "TBA but will be April 25 or 26, 2026".
+        range_match = re.search(
+            r"\b([A-Za-z]+)\s+(\d{1,2})(?:\s+or\s+(\d{1,2}))?,?\s+(\d{4})\b",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if range_match:
+            month, first_day, second_day, year = range_match.groups()
+            latest_day = max(int(first_day), int(second_day or first_day))
+            for fmt in ("%B %d %Y", "%b %d %Y"):
+                try:
+                    parsed = datetime.strptime(f"{month} {latest_day} {year}", fmt).date()
+                    break
+                except ValueError:
+                    continue
     if not parsed:
         return {"parsed": False, "is_past": False, "weekday_mismatch": False, "message": ""}
     expected_weekday = parsed.strftime("%A")
@@ -1470,8 +1487,12 @@ def voting_instructions(show_slug: str):
 @app.get("/events")
 def events():
     upcoming_show = get_next_upcoming_show()
+    if upcoming_show and _event_date_status(upcoming_show)["is_past"]:
+        upcoming_show = None
     if not upcoming_show:
-        upcoming_show = get_active_show()
+        active_show = get_active_show()
+        if active_show and not _event_date_status(active_show)["is_past"]:
+            upcoming_show = active_show
 
     return render_template(
         "events.html",

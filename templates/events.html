@@ -29,9 +29,12 @@
       </div>
     </div>
   {% else %}
-    <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8">
-      <h1 class="text-2xl font-semibold">No upcoming show posted yet</h1>
-      <p class="mt-2 text-slate-600">Please check back soon for updated event details.</p>
+    <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-8 text-center">
+      <h1 class="text-3xl font-semibold">No Upcoming Show Posted Yet</h1>
+      <p class="mx-auto mt-3 max-w-xl text-lg leading-relaxed text-slate-600">
+        Contact us to be notified about upcoming shows, or check back at a later date.
+      </p>
+      <a class="mt-6 inline-flex btn btn-primary" href="{{ url_for('contact_page') }}">Contact Us</a>
     </div>
   {% endif %}
 </div>

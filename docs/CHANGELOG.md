@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.2-beta
+
+Date: 2026-07-01
+
+### Fixed
+- Expired shows are no longer presented as upcoming events.
+- Public no-show messages now direct visitors to Contact for notifications or invite them to check back later.
+
 ## 0.10.1-beta
 
 Date: 2026-07-01
