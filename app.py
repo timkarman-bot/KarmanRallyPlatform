@@ -281,7 +281,7 @@ DEFAULT_PUBLIC_VOTE_DISCLOSURE = (
 # Version Information
 # ==========================================================
 
-APP_VERSION = "0.10.0-beta"
+APP_VERSION = "0.10.1-beta"
 APP_RELEASE_STAGE = "beta"
 APP_RELEASE_NAME = "Consent, Restricted Voting, and Event-Day Safety Beta"
 

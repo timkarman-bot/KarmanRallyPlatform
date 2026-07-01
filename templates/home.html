@@ -9,9 +9,7 @@
     {% endif %}
     <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 text-white text-xs">Current Featured Event</div>
     <h1 class="mt-4 text-4xl font-semibold tracking-tight">{{ show["title"] }}</h1>
-    {% if show["description"] %}
-      <div class="mt-3 text-slate-700 max-w-xl leading-relaxed whitespace-pre-line">{{ show["description"] }}</div>
-    {% endif %}
+    {% if show["description"] %}<div class="mt-3 text-slate-700 max-w-xl leading-relaxed whitespace-pre-line">{{ show["description"] }}</div>{% endif %}
     <div class="mt-6 grid gap-2 text-sm text-slate-700">
       {% if show["date"] %}<div><span class="font-semibold">Date:</span> {{ show["date"] }}</div>{% endif %}
       {% if show["location_name"] %}<div><span class="font-semibold">Location:</span> {{ show["location_name"] }}</div>{% endif %}
@@ -33,60 +31,12 @@
   {% endif %}
 </section>
 {% else %}
-<section class="grid gap-6 lg:grid-cols-[1.25fr,.75fr] items-start">
-  <div class="rounded-3xl p-8 glass border border-slate-200 shadow-sm">
-    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 text-white text-xs">
-      Charity Car Shows • Cruise-Ins • Pop-Up Events
-    </div>
-
-    <h1 class="mt-4 text-4xl font-semibold tracking-tight">
-      Karman Kar Shows & Events
-    </h1>
-
-    <p class="mt-4 text-slate-700 max-w-2xl leading-relaxed">
-      We help charities, churches, businesses, and community groups use car shows,
-      cruise-ins, and pop-up events to bring people together, raise funds, and create
-      a professional event experience.
-    </p>
-
-    <div class="mt-6 grid gap-3 md:grid-cols-3">
-      <div class="rounded-2xl bg-white border border-slate-200 p-4">
-        <div class="font-semibold">Pop-Up Shows</div>
-        <p class="mt-1 text-sm text-slate-600">Simple day-of events with lower setup and fast community engagement.</p>
-      </div>
-
-      <div class="rounded-2xl bg-white border border-slate-200 p-4">
-        <div class="font-semibold">Cruise-Ins</div>
-        <p class="mt-1 text-sm text-slate-600">Casual gatherings for restaurants, churches, and local businesses.</p>
-      </div>
-
-      <div class="rounded-2xl bg-white border border-slate-200 p-4">
-        <div class="font-semibold">Full Shows</div>
-        <p class="mt-1 text-sm text-slate-600">Registration, sponsors, voting, awards, and event management support.</p>
-      </div>
-    </div>
-
-    <div class="mt-8 flex flex-wrap gap-3">
-      <a href="{{ url_for('events') }}" class="btn btn-primary">View upcoming events</a>
-      <a href="{{ url_for('contact_page') }}" class="btn btn-outline">Host or sponsor a show</a>
-    </div>
-  </div>
-
-  <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-6">
-    <h2 class="text-xl font-semibold">Want to be part of the next event?</h2>
-    <p class="mt-3 text-slate-600 text-sm leading-relaxed">
-      Contact us about hosting a show, sponsoring an event, bringing vehicles,
-      or using our event platform for your organization.
-    </p>
-
-    <div class="mt-5 grid gap-3 text-sm text-slate-700">
-      <div><span class="font-semibold">Email:</span> info@karmankarshowsandevents.com</div>
-      <div><span class="font-semibold">Good fits:</span> charities, churches, venues, sponsors, clubs, and community groups</div>
-    </div>
-
-    <a href="{{ url_for('contact_page') }}" class="mt-6 inline-block btn btn-primary">
-      Contact us
-    </a>
+<section class="min-h-[60vh] flex items-center justify-center py-10">
+  <div class="w-full max-w-3xl rounded-3xl bg-white border border-slate-200 shadow-sm px-6 py-12 text-center sm:px-10">
+    <img src="{{ url_for('static', filename='img/karmankarshows-logo.png') }}" alt="Karman Kar Shows & Events" class="mx-auto w-full max-w-md h-auto">
+    <h1 class="mt-8 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">No Active Show</h1>
+    <p class="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-slate-600">We are preparing our next event. Check back soon or sign up to receive information about upcoming shows.</p>
+    <a href="{{ url_for('events') }}" class="mt-8 inline-flex btn btn-primary">Get information on upcoming shows</a>
   </div>
 </section>
 {% endif %}

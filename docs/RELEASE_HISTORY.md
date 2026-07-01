@@ -1,5 +1,11 @@
 # Release History
 
+## 0.10.1-beta — No Active Show Home Page
+
+Date: 2026-07-01
+
+The public home page now presents a centered Karman Kar logo and a prominent "No Active Show" message when no event is active. Visitors can follow a clear link to get information about upcoming shows.
+
 ## 0.10.0-beta — Consent, Restricted Voting, and Event-Day Safety
 
 Date: 2026-06-25

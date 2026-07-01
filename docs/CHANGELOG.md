@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.1-beta
+
+Date: 2026-07-01
+
+### Changed
+- Redesigned the public home page when no show is active with a centered Karman Kar logo.
+- Enlarged the "No Active Show" message and added a direct link for upcoming-show information.
+
 ## 0.10.0-beta
 
 Date: 2026-06-25
