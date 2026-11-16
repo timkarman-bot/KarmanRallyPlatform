@@ -4458,7 +4458,7 @@ def _admin_reset_serializer() -> URLSafeTimedSerializer:
 def _admin_reset_page(**context):
     response = app.make_response(render_template("admin_password_reset.html", **context))
     response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Referrer-Policy"] = "strict-origin"
     return response
 
 
