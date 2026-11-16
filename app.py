@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse
 from werkzeug.utils import secure_filename
 from flask import send_from_directory
+from itsdangerous import BadData, URLSafeTimedSerializer
 
 import stripe
 from flask import (
@@ -1039,6 +1040,17 @@ def security_before_request():
     session.permanent = True
     if not _same_origin_allowed():
         abort(400, "Blocked request origin.")
+    if session.get("admin_authed") and session.get("admin_user_id") is not None:
+        user = get_admin_user_by_email(session.get("admin_email", ""))
+        if (
+            not user
+            or not user["is_active"]
+            or user["id"] != session["admin_user_id"]
+            or not hmac.compare_digest(session.get("admin_session_tag", ""), _admin_password_tag(user))
+        ):
+            _clear_admin_session()
+        else:
+            session["admin_role"] = (user["global_role"] or "show_owner").strip().lower()
     if (
         request.method in {"POST", "PUT", "PATCH", "DELETE"}
         and request.endpoint != "stripe_webhook"
@@ -1594,7 +1606,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[bool, str]:
+def _send_system_email(*, subject: str, body: str, reply_to: str = "", recipient: str = "") -> tuple[bool, str]:
     """Send a system notification email.
 
     The contact form always saves the message first. Email is only a notification layer.
@@ -1627,7 +1639,8 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
         or "info@karmankarshowsandevents.com"
     )
     target = (
-        os.getenv("CONTACT_EMAIL", "").strip()
+        recipient
+        or os.getenv("CONTACT_EMAIL", "").strip()
         or os.getenv("MAIL_TO", "").strip()
         or "info@karmankarshowsandevents.com"
     )
@@ -1635,7 +1648,7 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
     use_ssl = _env_bool("MAIL_USE_SSL", _env_bool("SMTP_USE_SSL", False))
     use_tls = _env_bool("MAIL_USE_TLS", _env_bool("SMTP_USE_TLS", not use_ssl))
 
-    if not smtp_host or not smtp_username or not smtp_password:
+    if not smtp_host or not smtp_username or not smtp_password or (recipient and not (use_ssl or use_tls)):
         msg = "SMTP is not configured; email was not sent."
         app.logger.warning("%s Subject=%s", msg, subject)
         return False, msg
@@ -1662,7 +1675,10 @@ def _send_system_email(*, subject: str, body: str, reply_to: str = "") -> tuple[
                 server.send_message(email_msg)
         return True, ""
     except Exception as exc:
-        app.logger.exception("Failed to send system email.")
+        if recipient:
+            app.logger.warning("Account email delivery failed (%s).", type(exc).__name__)
+        else:
+            app.logger.exception("Failed to send system email.")
         return False, str(exc)
 
 
@@ -4422,6 +4438,91 @@ def admin_command_center():
         new_contact_message_count=count_new_contact_messages(),
     )
     
+def _admin_password_tag(user) -> str:
+    return hmac.new(
+        app.secret_key.encode(),
+        f"admin-password:{user['id']}:{user['password_hash']}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _clear_admin_session() -> None:
+    for key in ("admin_authed", "admin_user_id", "admin_email", "admin_name", "admin_role", "admin_session_tag"):
+        session.pop(key, None)
+
+
+def _admin_reset_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(app.secret_key, salt="admin-password-reset-v1")
+
+
+def _admin_reset_page(**context):
+    response = app.make_response(render_template("admin_password_reset.html", **context))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.route("/admin/forgot-password", methods=["GET", "POST"])
+@rate_limit("admin_forgot_password", 15, 900)
+def admin_forgot_password():
+    if request.method == "GET":
+        return _admin_reset_page()
+    email = request.form.get("email", "").strip().lower()
+    if email and len(email) <= 254:
+        email_bucket = hashlib.sha256(email.encode()).hexdigest()
+        if rate_limit_increment(f"admin_forgot_email:{email_bucket}", 900) <= 3:
+            user = get_admin_user_by_email(email)
+            if user and user["is_active"]:
+                token = _admin_reset_serializer().dumps([user["email"], _admin_password_tag(user)])
+                reset_path = url_for("admin_reset_password", token=token)
+                reset_url = f"https://www.karmankarshowsandevents.com{reset_path}"
+                _send_system_email(
+                    subject="Reset your Karman Rally admin password",
+                    body=f"Reset your admin password within 30 minutes:\n\n{reset_url}\n\nIf you did not request this, you can ignore this email.",
+                    recipient=user["email"],
+                )
+    return _admin_reset_page(message="If an active admin account matches that email, a reset link will be sent.")
+
+
+@app.route("/admin/reset-password", methods=["GET", "POST"])
+@rate_limit("admin_reset_password", 25, 900)
+def admin_reset_password():
+    token = (request.form if request.method == "POST" else request.args).get("token", "")
+    invalid = "That reset link is invalid or expired. Request another one."
+    if not token or len(token) > 2048:
+        return _admin_reset_page(error=invalid)
+    try:
+        email, tag = _admin_reset_serializer().loads(token, max_age=1800)
+    except (BadData, TypeError, ValueError):
+        return _admin_reset_page(error=invalid)
+    if not isinstance(email, str) or not isinstance(tag, str):
+        return _admin_reset_page(error=invalid)
+    user = get_admin_user_by_email(email)
+    if not user or not user["is_active"] or not hmac.compare_digest(tag, _admin_password_tag(user)):
+        return _admin_reset_page(error=invalid)
+    if request.method == "GET":
+        return _admin_reset_page(token=token)
+    password = request.form.get("password", "")
+    if not (12 <= len(password) <= 128) or password != request.form.get("confirm_password", ""):
+        return _admin_reset_page(token=token, error="Enter matching passwords between 12 and 128 characters.")
+    password_hash = generate_password_hash(password)
+    conn = sqlite3.connect(_db_path(), timeout=10)
+    try:
+        with conn:
+            changed = conn.execute(
+                "UPDATE admin_users SET password_hash = ?, updated_at = datetime('now') "
+                "WHERE id = ? AND email = ? AND is_active = 1 AND password_hash = ?",
+                (password_hash, user["id"], user["email"], user["password_hash"]),
+            ).rowcount
+    finally:
+        conn.close()
+    if changed != 1:
+        return _admin_reset_page(error=invalid)
+    if session.get("admin_user_id") == user["id"]:
+        _clear_admin_session()
+    return _admin_reset_page(message="Your password has been changed. Sign in with your new password.")
+
+
 @app.post("/admin/login")
 @rate_limit("admin_login", 10, 900)
 def admin_login():
@@ -4439,6 +4540,7 @@ def admin_login():
             session["admin_email"] = user["email"]
             session["admin_name"] = user["name"]
             session["admin_role"] = (user["global_role"] or "show_owner").strip().lower()
+            session["admin_session_tag"] = _admin_password_tag(user)
             _log_event("admin.user_login_success", int(show["id"]) if show else None, {"email": email, "next": next_url}, actor_type="admin")
             return redirect(next_url)
         _log_event("admin.user_login_failed", int(show["id"]) if show else None, {"email": email, "next": next_url}, actor_type="admin")
@@ -4446,6 +4548,7 @@ def admin_login():
 
     # Legacy super-admin fallback. Keeps existing Railway ADMIN_PASSWORD/ADMIN_PASSWORD_HASH working.
     if _check_admin_password(pw):
+        _clear_admin_session()
         session["admin_authed"] = True
         session["admin_user_id"] = None
         session["admin_email"] = ""
@@ -4462,8 +4565,7 @@ def admin_login():
 @require_admin
 def admin_logout():
     show = get_active_show()
-    for key in ["admin_authed", "admin_user_id", "admin_email", "admin_name", "admin_role"]:
-        session.pop(key, None)
+    _clear_admin_session()
     _log_event("admin.logout", int(show["id"]) if show else None, actor_type="admin")
     return redirect(url_for("admin_page"))
 
