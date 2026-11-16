@@ -23,9 +23,8 @@
       <form method="POST" action="{{ url_for('admin_login') }}" class="mt-6 space-y-4">
         <input type="hidden" name="next" value="{{ next }}">
         <div>
-          <label class="text-sm font-semibold">Email <span class="text-slate-400">(optional for legacy super-admin)</span></label>
+          <label class="text-sm font-semibold">Email</label>
           <input type="email" name="email" class="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3" placeholder="user@example.com">
-          <div class="mt-1 text-xs text-slate-500">Leave blank to use the legacy Railway admin password.</div>
         </div>
         <div>
           <label class="text-sm font-semibold">Password</label>
